@@ -6,6 +6,8 @@
 #include <stdexcept>
 #include "Types.h"
 #include "OrderType.h"
+#include "Order.h"
+#include "Constants.h"
 
 class Order { // represents one individual order
 public:
@@ -17,6 +19,9 @@ public:
         , initialQuantity_ { quantity }
         , remainingQuantity_ { quantity }
     {}
+    Order(OrderId orderId, Side side, Quantity quantity)
+        : Order(OrderType::Market, orderId, side, Constants::InvalidPrice, quantity)
+    { }
 
     OrderId GetOrderId() const { return orderId_; }
     Side GetSide() const { return side_; }
@@ -32,6 +37,15 @@ public:
             throw std::logic_error(std::format("Order ({}) cannot be filled for more than its remaining quantity.", GetOrderId()));
         }
         remainingQuantity_ -= quantity;
+    }
+
+    void ToGoodTillCancel(Price price) {
+        if (orderType_ != OrderType::Market) {
+            throw std::logic_error("Cannot convert non-market order to GoodTillCancel");
+        }
+
+        price_ = price;
+        orderType_ = OrderType::GoodTillCancel;
     }
 
 private:

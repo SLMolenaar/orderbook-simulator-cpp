@@ -10,6 +10,7 @@
 #include "LevelInfo.h"
 #include "Types.h"
 #include "OrderType.h"
+#include "Constants.h"
 
 class Orderbook {
 private:
@@ -114,6 +115,18 @@ public:
     Trades AddOrder(OrderPointer order) {
         if (orders_.contains(order->GetOrderId())) {
             return { }; // Duplicate order ID, reject
+        }
+
+        if (order->GetOrderType() == OrderType::Market) {
+            if (order->GetSide() == Side::Buy && !asks_.empty()) {
+                order->ToGoodTillCancel(std::numeric_limits<Price>::max()); // Converts order to GoodTillCancel order, but willing to take any price
+            }
+            else if (order->GetSide() == Side::Sell && !bids_.empty()) {
+                order->ToGoodTillCancel(std::numeric_limits<Price>::min());
+            }
+            else {
+                return {}; // Empty book, reject market order
+            }
         }
 
         // FillAndKill orders are rejected if they can't immediately match

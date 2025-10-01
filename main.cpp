@@ -12,5 +12,10 @@ int main() {
     std::cout << orderbook.Size() << '\n'; // 1
     orderbook.CancelOrder(orderId);
     std::cout << orderbook.Size() << '\n'; // 0
+
+
+
+
+
     return 0;
 }
