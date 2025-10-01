@@ -21,7 +21,7 @@
 #include <cstdint>
 
 enum class OrderType {
-    GoodTillCancel, // Active untill completely filled
+    GoodTillCancel, // Active until completely filled
     FillAndKill // Fill for as far as possible and kill immediately
 };
 
@@ -220,22 +220,6 @@ private:
             }
         }
 
-        // Handle FillAndKill orders: cancel unfilled portion
-        if (!bids_.empty()) {
-            auto& [_, bids] = *bids_.begin();
-            auto& order = bids.front();
-            if (order->GetOrderType() == OrderType::FillAndKill) {
-                CancelOrder(order->GetOrderId());
-            }
-        }
-        if (!asks_.empty()) {
-            auto& [_, asks] = *asks_.begin();
-            auto& order = asks.front();
-            if (order->GetOrderType() == OrderType::FillAndKill) {
-                CancelOrder(order->GetOrderId());
-            }
-        }
-
         return trades;
     }
 
@@ -255,9 +239,9 @@ public:
 
         // Add to appropriate side (buy or sell)
         if (order->GetSide() == Side::Buy) {
-            auto& orders = bids_[order->GetPrice()]; // Get or create price level
-            orders.push_back(order); // Add to end (FIFO within price level)
-            iterator = std::next(orders.begin(), orders.size() - 1); // Get iterator to new order
+            auto& orders = bids_[order->GetPrice()];
+            orders.push_back(order);
+            iterator = std::next(orders.begin(), orders.size() - 1);
         }
         else {
             auto& orders = asks_[order->GetPrice()];
@@ -265,10 +249,16 @@ public:
             iterator = std::next(orders.begin(), orders.size() - 1);
         }
 
-        // Store in lookup map with its location
         orders_.insert({order->GetOrderId(), OrderEntry{order, iterator}});
 
-        return MatchOrders(); // Try to match and return resulting trades
+        Trades trades = MatchOrders();
+
+        // Remove any unfilled FillAndKill orders after matching
+        if (order->GetOrderType() == OrderType::FillAndKill && !order->IsFilled()) {
+            CancelOrder(order->GetOrderId());
+        }
+
+        return trades;
     }
 
     // Remove order from the orderbook
