@@ -4,6 +4,8 @@
 #include <unordered_map>
 #include <algorithm>
 #include <numeric>
+#include <chrono>
+#include <vector>
 #include "Order.h"
 #include "OrderModify.h"
 #include "Trade.h"
@@ -24,6 +26,10 @@ private:
     std::map<Price, OrderPointers, std::less<Price>> asks_; // Sell orders: lowest price first (best ask on top)
     std::unordered_map<OrderId, OrderEntry> orders_; // Fast lookup: OrderId -> OrderEntry for O(1) access
 
+    std::chrono::system_clock::time_point lastDayReset_;
+    std::chrono::hours dayResetHour_{ 15 }; // 3:59 PM - 1 minute before market close
+    int dayResetMinute_{ 59 };
+
     bool CanMatch(Side side, Price price) const {
         if (side == Side::Buy) {
             if (asks_.empty()){
@@ -39,6 +45,104 @@ private:
             const auto& [bestBid, _] = *bids_.begin(); // Highest bid price
             return price <= bestBid; // Sell price must be <= bid price to match
         }
+    }
+
+    void CheckAndResetDay() {
+        auto now = std::chrono::system_clock::now();
+        auto nowTime = std::chrono::system_clock::to_time_t(now);
+        auto lastResetTime = std::chrono::system_clock::to_time_t(lastDayReset_);
+
+        std::tm nowTm = *std::localtime(&nowTime);
+
+        // Calculate today's reset time
+        std::tm todayResetTm = nowTm;
+        todayResetTm.tm_hour = dayResetHour_.count();
+        todayResetTm.tm_min = dayResetMinute_;
+        todayResetTm.tm_sec = 0;
+        auto todayResetTime = std::mktime(&todayResetTm);
+
+        // If lastReset was before today's reset time AND we're now past it
+        if (lastResetTime < todayResetTime && nowTime >= todayResetTime) {
+            CancelGoodForDayOrders();
+            lastDayReset_ = now;
+        }
+    }
+
+    void CancelGoodForDayOrders() {
+        std::vector<OrderId> ordersToCancel;
+
+        // add all GoodForDay orders to the ordersToCancel vector
+        for (const auto& [orderId, entry] : orders_) {
+            if (entry.order_->GetOrderType() == OrderType::GoodForDay) {
+                ordersToCancel.push_back(orderId);
+            }
+        }
+        // cancel all orders in the ordersToCancel vector
+        for (const auto& orderId : ordersToCancel) {
+            CancelOrder(orderId);
+        }
+    }
+
+    Trades MatchFillOrKill(OrderPointer order) {
+        Trades trades;
+        Quantity remainingQuantity = order->GetRemainingQuantity();
+
+        // Collect matching orders without modifying the book yet
+        std::vector<std::pair<OrderPointer, Quantity>> matchingOrders;
+
+        if (order->GetSide() == Side::Buy) {
+            for (auto& [askPrice, askOrders] : asks_) {
+                if (askPrice > order->GetPrice()) break;
+
+                for (auto& ask : askOrders) {
+                    Quantity matchQty = std::min(remainingQuantity, ask->GetRemainingQuantity());
+                    matchingOrders.push_back({ask, matchQty});
+                    remainingQuantity -= matchQty;
+                    if (remainingQuantity == 0) break;
+                }
+                if (remainingQuantity == 0) break;
+            }
+        }
+        else {
+            for (auto& [bidPrice, bidOrders] : bids_) {
+                if (bidPrice < order->GetPrice()) break;
+
+                for (auto& bid : bidOrders) {
+                    Quantity matchQty = std::min(remainingQuantity, bid->GetRemainingQuantity());
+                    matchingOrders.push_back({bid, matchQty});
+                    remainingQuantity -= matchQty;
+                    if (remainingQuantity == 0) break;
+                }
+                if (remainingQuantity == 0) break;
+            }
+        }
+
+        // Check if fully fillable
+        if (remainingQuantity > 0) {
+            return { }; // Can't fully fill, reject with no trades
+        }
+
+        // Execute all matches
+        for (auto& [matchOrder, quantity] : matchingOrders) {
+            order->Fill(quantity);
+            matchOrder->Fill(quantity);
+
+            trades.push_back(Trade{
+                order->GetSide() == Side::Buy ?
+                TradeInfo{ order->GetOrderId(), matchOrder->GetPrice(), quantity } :
+                TradeInfo{ matchOrder->GetOrderId(), matchOrder->GetPrice(), quantity },
+                order->GetSide() == Side::Buy ?
+                TradeInfo{ matchOrder->GetOrderId(), matchOrder->GetPrice(), quantity } :
+                TradeInfo{ order->GetOrderId(), matchOrder->GetPrice(), quantity }
+});
+
+            // Remove filled orders
+            if (matchOrder->IsFilled()) {
+                CancelOrder(matchOrder->GetOrderId());
+            }
+        }
+
+        return trades;
     }
 
     Trades MatchOrders() {
@@ -111,8 +215,22 @@ private:
     }
 
 public:
+    Orderbook()
+        : lastDayReset_(std::chrono::system_clock::now())
+    {}
+
+    // Set the time at which GoodForDay orders expire (default 15:59)
+    void SetDayResetTime(int hour, int minute = 59) {
+        if (hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59) {
+            dayResetHour_ = std::chrono::hours(hour);
+            dayResetMinute_ = minute;
+        }
+    }
+
     // Add new order to the orderbook and attempt to match
     Trades AddOrder(OrderPointer order) {
+        CheckAndResetDay(); // Check if we need to cancel GoodForDay orders
+
         if (orders_.contains(order->GetOrderId())) {
             return { }; // Duplicate order ID, reject
         }
@@ -132,6 +250,11 @@ public:
         // FillAndKill orders are rejected if they can't immediately match
         if (order->GetOrderType() == OrderType::FillAndKill && !CanMatch(order->GetSide(), order->GetPrice())) {
             return { };
+        }
+
+        // FillOrKill orders, special handling (all or nothing)
+        if (order->GetOrderType() == OrderType::FillOrKill) {
+            return MatchFillOrKill(order); // Handle without adding to book
         }
 
         OrderPointers::iterator iterator;
@@ -184,6 +307,8 @@ public:
 
     // Modify existing order by canceling and re-adding with new parameters
     Trades MatchOrder(OrderModify order) {
+        CheckAndResetDay(); // Check if we need to cancel GoodForDay orders
+
         if (!orders_.contains(order.GetOrderId())) {
             return { }; // Order doesn't exist
         }
