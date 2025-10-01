@@ -83,16 +83,17 @@ private:
         }
     }
 
-    Trades MatchFillOrKill(OrderPointer order) {
-        Trades trades;
-        Quantity remainingQuantity = order->GetRemainingQuantity();
+    // Collect potential matching orders for FillOrKill without modifying the book
+    std::vector<std::pair<OrderPointer, Quantity>> CollectMatchesForFillOrKill(
+        OrderPointer order,
+        Quantity& remainingQuantity) {
 
-        // Collect matching orders without modifying the book yet
         std::vector<std::pair<OrderPointer, Quantity>> matchingOrders;
 
         if (order->GetSide() == Side::Buy) {
+            // Match against asks (sell orders)
             for (auto& [askPrice, askOrders] : asks_) {
-                if (askPrice > order->GetPrice()) break;
+                if (askPrice > order->GetPrice()) break; // Price too high
 
                 for (auto& ask : askOrders) {
                     Quantity matchQty = std::min(remainingQuantity, ask->GetRemainingQuantity());
@@ -104,8 +105,9 @@ private:
             }
         }
         else {
+            // Match against bids (buy orders)
             for (auto& [bidPrice, bidOrders] : bids_) {
-                if (bidPrice < order->GetPrice()) break;
+                if (bidPrice < order->GetPrice()) break; // Price too low
 
                 for (auto& bid : bidOrders) {
                     Quantity matchQty = std::min(remainingQuantity, bid->GetRemainingQuantity());
@@ -117,32 +119,57 @@ private:
             }
         }
 
-        // Check if fully fillable
-        if (remainingQuantity > 0) {
-            return { }; // Can't fully fill, reject with no trades
-        }
+        return matchingOrders;
+    }
 
-        // Execute all matches
+    // Execute the collected matches and record trades
+    Trades ExecuteMatchesForFillOrKill(
+        OrderPointer order,
+        const std::vector<std::pair<OrderPointer, Quantity>>& matchingOrders) {
+
+        Trades trades;
+
         for (auto& [matchOrder, quantity] : matchingOrders) {
+            // Fill both orders
             order->Fill(quantity);
             matchOrder->Fill(quantity);
 
-            trades.push_back(Trade{
-                order->GetSide() == Side::Buy ?
-                TradeInfo{ order->GetOrderId(), matchOrder->GetPrice(), quantity } :
-                TradeInfo{ matchOrder->GetOrderId(), matchOrder->GetPrice(), quantity },
-                order->GetSide() == Side::Buy ?
-                TradeInfo{ matchOrder->GetOrderId(), matchOrder->GetPrice(), quantity } :
-                TradeInfo{ order->GetOrderId(), matchOrder->GetPrice(), quantity }
-});
+            // Record trade
+            if (order->GetSide() == Side::Buy) {
+                trades.push_back(Trade{
+                    TradeInfo{ order->GetOrderId(), order->GetPrice(), quantity },
+                    TradeInfo{ matchOrder->GetOrderId(), matchOrder->GetPrice(), quantity }
+                });
+            } else {
+                trades.push_back(Trade{
+                    TradeInfo{ matchOrder->GetOrderId(), matchOrder->GetPrice(), quantity },
+                    TradeInfo{ order->GetOrderId(), order->GetPrice(), quantity }
+                });
+            }
 
-            // Remove filled orders
+            // Remove filled orders from the book
             if (matchOrder->IsFilled()) {
                 CancelOrder(matchOrder->GetOrderId());
             }
         }
 
         return trades;
+    }
+
+    // Handle FillOrKill order
+    Trades MatchFillOrKill(OrderPointer order) {
+        Quantity remainingQuantity = order->GetRemainingQuantity();
+
+        // Collect all potential matches without modifying the book
+        auto matchingOrders = CollectMatchesForFillOrKill(order, remainingQuantity);
+
+        // Check if order can be fully filled
+        if (remainingQuantity > 0) {
+            return { }; // Can't fully fill, reject with no trades
+        }
+
+        // Execute all matches
+        return ExecuteMatchesForFillOrKill(order, matchingOrders);
     }
 
     Trades MatchOrders() {
