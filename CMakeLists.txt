@@ -20,11 +20,6 @@ set(HEADERS
         MarketDataFeed.h
 )
 
-# Main executable (original program)
-add_executable(OrderBookSim
-        main.cpp
-)
-
 # Test executable (functionality and performance tests)
 add_executable(OrderBookTests
         tests.cpp
