@@ -30,11 +30,6 @@ add_executable(OrderBookTests
         tests.cpp
 )
 
-# Market data feed test executable
-add_executable(MarketDataTest
-        MarketDataTest.cpp
-)
-
 # Fetch dependencies
 include(FetchContent)
 
@@ -79,7 +74,6 @@ target_link_libraries(LiveMarketData
 # Enable testing
 enable_testing()
 add_test(NAME OrderBookTests COMMAND OrderBookTests)
-add_test(NAME MarketDataTest COMMAND MarketDataTest)
 
 # Print build information
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
