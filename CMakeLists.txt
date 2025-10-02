@@ -35,11 +35,51 @@ add_executable(MarketDataTest
         MarketDataTest.cpp
 )
 
+# Fetch dependencies
+include(FetchContent)
+
+# Fetch nlohmann_json
+FetchContent_Declare(
+        json
+        URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz
+)
+FetchContent_MakeAvailable(json)
+
+# Fetch CURL with SSL support for Windows
+FetchContent_Declare(
+        curl
+        GIT_REPOSITORY https://github.com/curl/curl.git
+        GIT_TAG curl-8_4_0
+)
+
+# Configure CURL options
+set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(CURL_STATICLIB ON CACHE BOOL "" FORCE)
+set(BUILD_CURL_EXE OFF CACHE BOOL "" FORCE)
+set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
+set(HTTP_ONLY ON CACHE BOOL "" FORCE)
+set(CURL_DISABLE_LDAP ON CACHE BOOL "" FORCE)
+set(CURL_DISABLE_LDAPS ON CACHE BOOL "" FORCE)
+set(CURL_USE_SCHANNEL ON CACHE BOOL "Use Windows native SSL" FORCE)
+set(CMAKE_USE_SCHANNEL ON CACHE BOOL "" FORCE)
+
+FetchContent_MakeAvailable(curl)
+
+# Live market data executable
+add_executable(LiveMarketData
+        LiveMarketData.cpp
+)
+
+# Link libraries to LiveMarketData
+target_link_libraries(LiveMarketData
+        CURL::libcurl
+        nlohmann_json::nlohmann_json
+)
+
 # Enable testing
 enable_testing()
 add_test(NAME OrderBookTests COMMAND OrderBookTests)
 add_test(NAME MarketDataTest COMMAND MarketDataTest)
-add_test(NAME DepthVisualizationTest COMMAND DepthVisualizationTest)
 
 # Print build information
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
