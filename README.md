@@ -175,7 +175,3 @@ Potential extensions for production use:
 - Iceberg and other advanced order types
 - Historical data replay and backtesting framework
 - Market impact modeling
-
-## Author
-
-Built as a demonstration of C++ proficiency and understanding of market microstructure for quantitative finance applications.
