@@ -17,6 +17,7 @@ set(HEADERS
         Trade.h
         OrderBook.h
         Constants.h
+        MarketDataFeed.h
 )
 
 # Main executable (original program)
@@ -24,14 +25,21 @@ add_executable(OrderBookSim
         main.cpp
 )
 
-# Test executable (separate program)
+# Test executable (functionality and performance tests)
 add_executable(OrderBookTests
         tests.cpp
+)
+
+# Market data feed test executable
+add_executable(MarketDataTest
+        MarketDataTest.cpp
 )
 
 # Enable testing
 enable_testing()
 add_test(NAME OrderBookTests COMMAND OrderBookTests)
+add_test(NAME MarketDataTest COMMAND MarketDataTest)
+add_test(NAME DepthVisualizationTest COMMAND DepthVisualizationTest)
 
 # Print build information
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")

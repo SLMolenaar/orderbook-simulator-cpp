@@ -6,6 +6,10 @@
 #include <numeric>
 #include <chrono>
 #include <vector>
+#include <optional>
+#include <iostream>
+#include <iomanip>
+#include <sstream>
 #include "Order.h"
 #include "OrderModify.h"
 #include "Trade.h"
@@ -13,6 +17,7 @@
 #include "Types.h"
 #include "OrderType.h"
 #include "Constants.h"
+#include "MarketDataFeed.h"
 
 class Orderbook {
 private:
@@ -29,6 +34,11 @@ private:
     std::chrono::system_clock::time_point lastDayReset_;
     std::chrono::hours dayResetHour_{ 15 }; // 3:59 PM - 1 minute before market close
     int dayResetMinute_{ 59 };
+
+    // Market data feed tracking
+    MarketDataStats stats_;
+    uint64_t lastSequenceNumber_ = 0;
+    bool isInitialized_ = false;  // Track if we've received initial snapshot
 
     bool CanMatch(Side side, Price price) const {
         if (side == Side::Buy) {
@@ -245,6 +255,90 @@ private:
         return trades;
     }
 
+    // Internal method to handle new order message
+    void ProcessNewOrder(const NewOrderMessage& msg) {
+        auto order = std::make_shared<Order>(
+            msg.orderType,
+            msg.orderId,
+            msg.side,
+            msg.price,
+            msg.quantity
+        );
+        auto trades = AddOrder(order);
+        stats_.newOrders++;
+        // Count trades that resulted from this order
+        stats_.trades += trades.size();
+    }
+
+    // Internal method to handle cancel message
+    void ProcessCancel(const CancelOrderMessage& msg) {
+        CancelOrder(msg.orderId);
+        stats_.cancellations++;
+    }
+
+    // Internal method to handle modify message
+    void ProcessModify(const ModifyOrderMessage& msg) {
+        OrderModify modify(msg.orderId, msg.side, msg.newPrice, msg.newQuantity);
+        MatchOrder(modify);
+        stats_.modifications++;
+    }
+
+    // Internal method to handle trade message (informational only)
+    void ProcessTrade(const TradeMessage& msg) {
+        // In a real system, we might validate that this trade matches our book state
+        // For now, we just count it
+        stats_.trades++;
+    }
+
+    // Internal method to handle book snapshot (rebuild entire book)
+    void ProcessSnapshot(const BookSnapshotMessage& msg) {
+        // Clear existing book
+        bids_.clear();
+        asks_.clear();
+        orders_.clear();
+
+        // Rebuild from snapshot - using synthetic order IDs
+        OrderId syntheticId = 1000000;  // Start high to avoid conflicts
+
+        // Add bid levels
+        for (const auto& level : msg.bids) {
+            // Create orders representing the total quantity at this level
+            // In reality, we wouldn't know individual orders, just aggregated levels
+            auto order = std::make_shared<Order>(
+                OrderType::GoodTillCancel,
+                syntheticId++,
+                Side::Buy,
+                level.price,
+                level.quantity
+            );
+
+            auto& orders = bids_[level.price];
+            orders.push_back(order);
+            auto iterator = std::next(orders.begin(), orders.size() - 1);
+            orders_.insert({order->GetOrderId(), OrderEntry{order, iterator}});
+        }
+
+        // Add ask levels
+        for (const auto& level : msg.asks) {
+            auto order = std::make_shared<Order>(
+                OrderType::GoodTillCancel,
+                syntheticId++,
+                Side::Sell,
+                level.price,
+                level.quantity
+            );
+
+            auto& orders = asks_[level.price];
+            orders.push_back(order);
+            auto iterator = std::next(orders.begin(), orders.size() - 1);
+            orders_.insert({order->GetOrderId(), OrderEntry{order, iterator}});
+        }
+
+        isInitialized_ = true;
+        lastSequenceNumber_ = msg.sequenceNumber;
+        stats_.snapshots++;
+    }
+
 public:
     Orderbook()
         : lastDayReset_(std::chrono::system_clock::now())
@@ -376,5 +470,89 @@ public:
         }
 
         return OrderbookLevelInfos(bidInfos, askInfos);
+    }
+
+    /**
+     * Process a market data message from an exchange feed.
+     * This is the main entry point for handling tick-by-tick updates.
+     *
+     * Returns true if message was processed successfully, false otherwise.
+     */
+    bool ProcessMarketData(const MarketDataMessage& message) {
+        auto startTime = std::chrono::high_resolution_clock::now();
+
+        try {
+            // Use std::visit to handle different message types
+            std::visit([this](auto&& msg) {
+                using T = std::decay_t<decltype(msg)>;
+
+                if constexpr (std::is_same_v<T, NewOrderMessage>) {
+                    ProcessNewOrder(msg);
+                }
+                else if constexpr (std::is_same_v<T, CancelOrderMessage>) {
+                    ProcessCancel(msg);
+                }
+                else if constexpr (std::is_same_v<T, ModifyOrderMessage>) {
+                    ProcessModify(msg);
+                }
+                else if constexpr (std::is_same_v<T, TradeMessage>) {
+                    ProcessTrade(msg);
+                }
+                else if constexpr (std::is_same_v<T, BookSnapshotMessage>) {
+                    ProcessSnapshot(msg);
+                }
+            }, message);
+
+            auto endTime = std::chrono::high_resolution_clock::now();
+            auto latency = std::chrono::duration_cast<std::chrono::microseconds>(endTime - startTime);
+
+            // Update statistics
+            stats_.messagesProcessed++;
+            stats_.totalProcessingTime += latency;
+            stats_.maxLatency = std::max(stats_.maxLatency, latency);
+            stats_.minLatency = std::min(stats_.minLatency, latency);
+
+            return true;
+
+        } catch (...) {
+            stats_.errors++;
+            return false;
+        }
+    }
+
+     // Batch process multiple market data messages.
+     // More efficient than processing one at a time.
+    size_t ProcessMarketDataBatch(const std::vector<MarketDataMessage>& messages) {
+        size_t successCount = 0;
+        for (const auto& msg : messages) {
+            if (ProcessMarketData(msg)) {
+                successCount++;
+            }
+        }
+        return successCount;
+    }
+
+
+     // Get current market data processing statistics.
+    const MarketDataStats& GetMarketDataStats() const {
+        return stats_;
+    }
+
+
+     // Reset market data statistics.
+    void ResetMarketDataStats() {
+        stats_.Reset();
+    }
+
+
+     // Check if orderbook has been initialized with a snapshot.
+     // Before receiving a snapshot, incremental updates may be unreliable.
+    bool IsInitialized() const {
+        return isInitialized_;
+    }
+
+     // Get the last processed sequence number (for gap detection).
+    uint64_t GetLastSequenceNumber() const {
+        return lastSequenceNumber_;
     }
 };

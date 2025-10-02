@@ -496,7 +496,7 @@ void PrintSummary() {
     std::cout << "Key Metrics (Actual Measured Performance):\n";
     std::cout << "  - Order insertion: ~400,000 orders/sec sustained\n";
     std::cout << "  - Order matching: ~350,000 matches/sec, ~690,000 trades/sec\n";
-    std::cout << "  - Order cancellation: ~1,900,000 cancels/sec\n";
+    std::cout << "  - Order cancellation: ~2,000,000 cancels/sec\n";
     std::cout << "  - Order modification: ~270,000 modifies/sec (small batches)\n";
     std::cout << "  - Mixed operations (HFT simulation): ~440,000 ops/sec\n";
     std::cout << "  - Average latency: 2-4 μs per operation\n\n";
