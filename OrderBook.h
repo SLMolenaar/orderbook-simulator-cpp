@@ -187,54 +187,58 @@ private:
                 break; // No overlap in prices, can't match
             }
 
-            while (bids.size() && asks.size()) {
+            while (!bids.empty() && !asks.empty()) {
                 auto& bid = bids.front(); // FIFO: first order at this price level
                 auto& ask = asks.front();
 
                 // Match the minimum available quantity
                 Quantity quantity = std::min(bid->GetRemainingQuantity(), ask->GetRemainingQuantity());
 
+                // Record the trade before modifying orders
+                trades.push_back(Trade{
+                    TradeInfo{ bid->GetOrderId(), bid->GetPrice(), quantity },
+                    TradeInfo{ ask->GetOrderId(), ask->GetPrice(), quantity}});
+
                 bid->Fill(quantity); // Reduce remaining quantity
                 ask->Fill(quantity);
 
                 // Remove fully filled orders
                 if (bid->IsFilled()) {
-                    bids.pop_front();
                     orders_.erase(bid->GetOrderId());
+                    bids.pop_front();
                 }
                 if (ask->IsFilled()) {
-                    asks.pop_front();
                     orders_.erase(ask->GetOrderId());
+                    asks.pop_front();
                 }
+            }
 
-                // Remove empty price levels
-                if (bids.empty()) {
-                    bids_.erase(bidPrice);
-                }
-                if (asks.empty()) {
-                    asks_.erase(askPrice);
-                }
-
-                // Record the trade
-                trades.push_back(Trade{
-                    TradeInfo{ bid->GetOrderId(), bid->GetPrice(), quantity },
-                    TradeInfo{ ask->GetOrderId(), ask->GetPrice(), quantity}});
+            // Remove empty price levels
+            if (bids.empty()) {
+                bids_.erase(bidPrice);
+            }
+            if (asks.empty()) {
+                asks_.erase(askPrice);
             }
         }
 
         // Handle FillAndKill orders: cancel unfilled portion
         if (!bids_.empty()) {
             auto& [_, bids] = *bids_.begin();
-            auto& order = bids.front();
-            if (order->GetOrderType() == OrderType::FillAndKill) {
-                CancelOrder(order->GetOrderId());
+            if (!bids.empty()) {
+                auto& order = bids.front();
+                if (order->GetOrderType() == OrderType::FillAndKill) {
+                    CancelOrder(order->GetOrderId());
+                }
             }
         }
         if (!asks_.empty()) {
             auto& [_, asks] = *asks_.begin();
-            auto& order = asks.front();
-            if (order->GetOrderType() == OrderType::FillAndKill) {
-                CancelOrder(order->GetOrderId());
+            if (!asks.empty()) {
+                auto& order = asks.front();
+                if (order->GetOrderType() == OrderType::FillAndKill) {
+                    CancelOrder(order->GetOrderId());
+                }
             }
         }
 
