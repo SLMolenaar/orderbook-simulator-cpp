@@ -33,6 +33,9 @@ This project implements a matching engine and order book that supports multiple 
 - Bid-ask spread analysis and mid-price calculation
 - Market microstructure metrics
 
+<img width="524" height="1011" alt="image" src="https://github.com/user-attachments/assets/c381cab5-c68a-4eb2-b2b9-613e5c281614" />
+
+
 ## Build Instructions
 
 ### Requirements
