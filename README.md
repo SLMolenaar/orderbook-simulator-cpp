@@ -66,6 +66,254 @@ cmake --build . --config Release
 
 ## Architecture
 
+classDiagram
+    %% Core Type Aliases
+    class Types {
+        <<typedef>>
+        +Price: int32_t
+        +Quantity: uint32_t
+        +OrderId: uint64_t
+    }
+
+    %% Enumerations
+    class OrderType {
+        <<enumeration>>
+        GoodTillCancel
+        FillAndKill
+        Market
+        GoodForDay
+        FillOrKill
+    }
+
+    class Side {
+        <<enumeration>>
+        Buy
+        Sell
+    }
+
+    class MessageType {
+        <<enumeration>>
+        NewOrder
+        CancelOrder
+        ModifyOrder
+        Trade
+        BookSnapshot
+    }
+
+    %% Constants
+    class Constants {
+        <<static>>
+        +InvalidPrice: Price
+    }
+
+    %% Order Classes
+    class Order {
+        -orderType_: OrderType
+        -orderId_: OrderId
+        -side_: Side
+        -price_: Price
+        -initialQuantity_: Quantity
+        -remainingQuantity_: Quantity
+        +Order(OrderType, OrderId, Side, Price, Quantity)
+        +Order(OrderId, Side, Quantity)
+        +GetOrderId(): OrderId
+        +GetSide(): Side
+        +GetPrice(): Price
+        +GetOrderType(): OrderType
+        +GetInitialQuantity(): Quantity
+        +GetRemainingQuantity(): Quantity
+        +GetFilledQuantity(): Quantity
+        +IsFilled(): bool
+        +Fill(Quantity): void
+        +ToGoodTillCancel(Price): void
+    }
+
+    class OrderModify {
+        -orderId_: OrderId
+        -price_: Price
+        -side_: Side
+        -quantity_: Quantity
+        +OrderModify(OrderId, Side, Price, Quantity)
+        +GetOrderId(): OrderId
+        +GetPrice(): Price
+        +GetSide(): Side
+        +GetQuantity(): Quantity
+        +ToOrderPointer(OrderType): OrderPointer
+    }
+
+    %% Trade Classes
+    class TradeInfo {
+        +orderId_: OrderId
+        +price_: Price
+        +quantity_: Quantity
+    }
+
+    class Trade {
+        -bidTrade_: TradeInfo
+        -askTrade_: TradeInfo
+        +Trade(TradeInfo, TradeInfo)
+        +GetBidTrade(): TradeInfo
+        +GetAskTrade(): TradeInfo
+    }
+
+    %% Level Info Classes
+    class LevelInfo {
+        +price_: Price
+        +quantity_: Quantity
+    }
+
+    class OrderbookLevelInfos {
+        -bids_: LevelInfos
+        -asks_: LevelInfos
+        +OrderbookLevelInfos(LevelInfos, LevelInfos)
+        +GetBids(): LevelInfos
+        +GetAsks(): LevelInfos
+    }
+
+    %% Market Data Messages
+    class NewOrderMessage {
+        +type: MessageType
+        +orderId: OrderId
+        +side: Side
+        +price: Price
+        +quantity: Quantity
+        +orderType: OrderType
+        +timestamp: time_point
+    }
+
+    class CancelOrderMessage {
+        +type: MessageType
+        +orderId: OrderId
+        +timestamp: time_point
+    }
+
+    class ModifyOrderMessage {
+        +type: MessageType
+        +orderId: OrderId
+        +side: Side
+        +newPrice: Price
+        +newQuantity: Quantity
+        +timestamp: time_point
+    }
+
+    class TradeMessage {
+        +type: MessageType
+        +buyOrderId: OrderId
+        +sellOrderId: OrderId
+        +price: Price
+        +quantity: Quantity
+        +timestamp: time_point
+    }
+
+    class SnapshotLevel {
+        +price: Price
+        +quantity: Quantity
+        +orderCount: int
+    }
+
+    class BookSnapshotMessage {
+        +type: MessageType
+        +bids: vector~SnapshotLevel~
+        +asks: vector~SnapshotLevel~
+        +timestamp: time_point
+        +sequenceNumber: uint64_t
+    }
+
+    class MarketDataStats {
+        +messagesProcessed: uint64_t
+        +newOrders: uint64_t
+        +cancellations: uint64_t
+        +modifications: uint64_t
+        +trades: uint64_t
+        +snapshots: uint64_t
+        +errors: uint64_t
+        +sequenceGaps: uint64_t
+        +totalProcessingTime: microseconds
+        +maxLatency: microseconds
+        +minLatency: microseconds
+        +Reset(): void
+        +GetAverageLatencyMicros(): double
+    }
+
+    %% Main Orderbook Class
+    class Orderbook {
+        -OrderEntry: struct
+        -bids_: map~Price, OrderPointers~
+        -asks_: map~Price, OrderPointers~
+        -orders_: unordered_map~OrderId, OrderEntry~
+        -lastDayReset_: time_point
+        -dayResetHour_: hours
+        -dayResetMinute_: int
+        -stats_: MarketDataStats
+        -lastSequenceNumber_: uint64_t
+        -isInitialized_: bool
+        -CanMatch(Side, Price): bool
+        -CheckAndResetDay(): void
+        -CancelGoodForDayOrders(): void
+        -CollectMatchesForFillOrKill(): vector
+        -ExecuteMatchesForFillOrKill(): Trades
+        -MatchFillOrKill(OrderPointer): Trades
+        -MatchOrders(): Trades
+        -ProcessNewOrder(NewOrderMessage): void
+        -ProcessCancel(CancelOrderMessage): void
+        -ProcessModify(ModifyOrderMessage): void
+        -ProcessTrade(TradeMessage): void
+        -ProcessSnapshot(BookSnapshotMessage): void
+        +Orderbook()
+        +SetDayResetTime(int, int): void
+        +AddOrder(OrderPointer): Trades
+        +CancelOrder(OrderId): void
+        +MatchOrder(OrderModify): Trades
+        +Size(): size_t
+        +GetOrderInfos(): OrderbookLevelInfos
+        +ProcessMarketData(MarketDataMessage): bool
+        +ProcessMarketDataBatch(vector): size_t
+        +GetMarketDataStats(): MarketDataStats
+        +ResetMarketDataStats(): void
+        +IsInitialized(): bool
+        +GetLastSequenceNumber(): uint64_t
+    }
+
+    class OrderEntry {
+        <<internal struct>>
+        +order_: OrderPointer
+        +location_: iterator
+    }
+
+    %% Relationships
+    Order --> OrderType: uses
+    Order --> Side: uses
+    OrderModify --> Side: uses
+    OrderModify --> Order: creates
+    
+    Trade *-- TradeInfo: contains 2
+    
+    OrderbookLevelInfos *-- LevelInfo: contains many
+    
+    Orderbook *-- OrderEntry: contains
+    Orderbook o-- Order: manages
+    Orderbook --> Trade: produces
+    Orderbook --> OrderbookLevelInfos: produces
+    Orderbook *-- MarketDataStats: tracks
+    
+    NewOrderMessage --> MessageType: uses
+    NewOrderMessage --> Side: uses
+    NewOrderMessage --> OrderType: uses
+    CancelOrderMessage --> MessageType: uses
+    ModifyOrderMessage --> MessageType: uses
+    ModifyOrderMessage --> Side: uses
+    TradeMessage --> MessageType: uses
+    BookSnapshotMessage --> MessageType: uses
+    BookSnapshotMessage *-- SnapshotLevel: contains many
+    
+    Orderbook --> NewOrderMessage: processes
+    Orderbook --> CancelOrderMessage: processes
+    Orderbook --> ModifyOrderMessage: processes
+    Orderbook --> TradeMessage: processes
+    Orderbook --> BookSnapshotMessage: processes
+    
+    Constants --> Types: uses
+
 ### Order Book Structure
 
 ```
