@@ -66,7 +66,8 @@ cmake --build . --config Release
 
 ## Architecture
 
-classDiagram
+### Class Diagram
+```mermaid
     %% Core Type Aliases
     class Types {
         <<typedef>>
