@@ -29,7 +29,7 @@ private:
 
     std::map<Price, OrderPointers, std::greater<Price>> bids_; // Buy orders: highest price first (best bid on top)
     std::map<Price, OrderPointers, std::less<Price>> asks_; // Sell orders: lowest price first (best ask on top)
-    std::unordered_map<OrderId, OrderEntry> orders_; // Fast lookup: OrderId -> OrderEntry for O(1) access
+    std::unordered_map<OrderId, OrderEntry> orders_; // Fast lookup: OrderId, OrderEntry for O(1) access
 
     std::chrono::system_clock::time_point lastDayReset_;
     std::chrono::hours dayResetHour_{ 15 }; // 3:59 PM - 1 minute before market close
@@ -532,18 +532,15 @@ public:
         return successCount;
     }
 
-
      // Get current market data processing statistics.
     const MarketDataStats& GetMarketDataStats() const {
         return stats_;
     }
 
-
      // Reset market data statistics.
     void ResetMarketDataStats() {
         stats_.Reset();
     }
-
 
      // Check if orderbook has been initialized with a snapshot.
      // Before receiving a snapshot, incremental updates may be unreliable.
