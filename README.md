@@ -60,7 +60,7 @@ cmake --build . --config Release
 ./OrderBookTests
 
 # Live cryptocurrency orderbook
-./LiveMarketData BTCUSDT 1 20
+./LiveMarketData SOLUSDT 1 20
 # Args: [SYMBOL] [REFRESH_SECONDS] [DEPTH_LEVELS]
 ```
 
