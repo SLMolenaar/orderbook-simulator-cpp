@@ -9,20 +9,20 @@
 #include "OrderBook.h"
 
 // Callback function for libcurl to write response data
-size_t WriteCallback(void* contents, size_t size, size_t nmemb, std::string* userp) {
+size_t WriteCallback(void *contents, size_t size, size_t nmemb, std::string *userp) {
     size_t totalSize = size * nmemb;
-    userp->append((char*)contents, totalSize);
+    userp->append((char *) contents, totalSize);
     return totalSize;
 }
 
 // Fetch orderbook snapshot from Binance REST API
-std::string FetchBinanceOrderbook(const std::string& symbol, int limit = 20) {
-    CURL* curl;
+std::string FetchBinanceOrderbook(const std::string &symbol, int limit = 20) {
+    CURL *curl;
     CURLcode res;
     std::string readBuffer;
 
     curl = curl_easy_init();
-    if(curl) {
+    if (curl) {
         std::string url = "https://api.binance.com/api/v3/depth?symbol=" + symbol + "&limit=" + std::to_string(limit);
 
         curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
@@ -34,7 +34,7 @@ std::string FetchBinanceOrderbook(const std::string& symbol, int limit = 20) {
 
         res = curl_easy_perform(curl);
 
-        if(res != CURLE_OK) {
+        if (res != CURLE_OK) {
             std::cerr << "curl_easy_perform() failed: " << curl_easy_strerror(res) << std::endl;
         }
 
@@ -45,7 +45,7 @@ std::string FetchBinanceOrderbook(const std::string& symbol, int limit = 20) {
 }
 
 // Convert Binance JSON response to BookSnapshotMessage
-BookSnapshotMessage ParseBinanceSnapshot(const std::string& jsonStr) {
+BookSnapshotMessage ParseBinanceSnapshot(const std::string &jsonStr) {
     auto json = nlohmann::json::parse(jsonStr);
 
     BookSnapshotMessage snapshot;
@@ -53,7 +53,7 @@ BookSnapshotMessage ParseBinanceSnapshot(const std::string& jsonStr) {
     snapshot.sequenceNumber = json["lastUpdateId"];
 
     // Parse bids (buy orders)
-    for (const auto& bid : json["bids"]) {
+    for (const auto &bid: json["bids"]) {
         SnapshotLevel level;
         level.price = static_cast<Price>(std::stod(bid[0].get<std::string>()) * 100); // Convert to cents
         level.quantity = static_cast<Quantity>(std::stod(bid[1].get<std::string>()) * 100); // Convert to smallest unit
@@ -62,7 +62,7 @@ BookSnapshotMessage ParseBinanceSnapshot(const std::string& jsonStr) {
     }
 
     // Parse asks (sell orders)
-    for (const auto& ask : json["asks"]) {
+    for (const auto &ask: json["asks"]) {
         SnapshotLevel level;
         level.price = static_cast<Price>(std::stod(ask[0].get<std::string>()) * 100);
         level.quantity = static_cast<Quantity>(std::stod(ask[1].get<std::string>()) * 100);
@@ -74,7 +74,7 @@ BookSnapshotMessage ParseBinanceSnapshot(const std::string& jsonStr) {
 }
 
 // Format timestamp for display
-std::string FormatTimestamp(const std::chrono::system_clock::time_point& tp) {
+std::string FormatTimestamp(const std::chrono::system_clock::time_point &tp) {
     auto time = std::chrono::system_clock::to_time_t(tp);
     std::stringstream ss;
     ss << std::put_time(std::localtime(&time), "%Y-%m-%d %H:%M:%S");
@@ -82,10 +82,10 @@ std::string FormatTimestamp(const std::chrono::system_clock::time_point& tp) {
 }
 
 // Print orderbook in a nice format
-void PrintOrderbook(const Orderbook& orderbook, const std::string& symbol, int levels = 10) {
+void PrintOrderbook(const Orderbook &orderbook, const std::string &symbol, int levels = 10) {
     auto infos = orderbook.GetOrderInfos();
-    const auto& bids = infos.GetBids();
-    const auto& asks = infos.GetAsks();
+    const auto &bids = infos.GetBids();
+    const auto &asks = infos.GetAsks();
 
     // Clear screen, works on windows
     system("cls");
@@ -98,35 +98,35 @@ void PrintOrderbook(const Orderbook& orderbook, const std::string& symbol, int l
     std::cout << "========================================\n\n";
 
     std::cout << std::setw(15) << "BID QTY" << " | "
-              << std::setw(12) << "BID PRICE" << " | "
-              << std::setw(12) << "ASK PRICE" << " | "
-              << std::setw(15) << "ASK QTY" << "\n";
+            << std::setw(12) << "BID PRICE" << " | "
+            << std::setw(12) << "ASK PRICE" << " | "
+            << std::setw(15) << "ASK QTY" << "\n";
     std::cout << std::string(65, '-') << "\n";
 
-    int maxLevels = std::max(std::min((int)bids.size(), levels),
-                             std::min((int)asks.size(), levels));
+    int maxLevels = std::max(std::min((int) bids.size(), levels),
+                             std::min((int) asks.size(), levels));
 
     for (int i = 0; i < maxLevels; ++i) {
         // Print bid
         if (i < bids.size()) {
             std::cout << std::setw(15) << std::fixed << std::setprecision(2)
-                      << bids[i].quantity_ / 100.0 << " | "
-                      << std::setw(12) << std::fixed << std::setprecision(2)
-                      << bids[i].price_ / 100.0 << " | ";
+                    << bids[i].quantity_ / 100.0 << " | "
+                    << std::setw(12) << std::fixed << std::setprecision(2)
+                    << bids[i].price_ / 100.0 << " | ";
         } else {
             std::cout << std::setw(15) << "-" << " | "
-                      << std::setw(12) << "-" << " | ";
+                    << std::setw(12) << "-" << " | ";
         }
 
         // Print ask
         if (i < asks.size()) {
             std::cout << std::setw(12) << std::fixed << std::setprecision(2)
-                      << asks[i].price_ / 100.0 << " | "
-                      << std::setw(15) << std::fixed << std::setprecision(2)
-                      << asks[i].quantity_ / 100.0 << "\n";
+                    << asks[i].price_ / 100.0 << " | "
+                    << std::setw(15) << std::fixed << std::setprecision(2)
+                    << asks[i].quantity_ / 100.0 << "\n";
         } else {
             std::cout << std::setw(12) << "-" << " | "
-                      << std::setw(15) << "-" << "\n";
+                    << std::setw(15) << "-" << "\n";
         }
     }
 
@@ -139,26 +139,26 @@ void PrintOrderbook(const Orderbook& orderbook, const std::string& symbol, int l
         double spreadBps = (spread / midPrice) * 10000;
 
         std::cout << "Best Bid: $" << std::fixed << std::setprecision(2)
-                  << bids[0].price_ / 100.0 << "\n";
+                << bids[0].price_ / 100.0 << "\n";
         std::cout << "Best Ask: $" << asks[0].price_ / 100.0 << "\n";
         std::cout << "Spread: $" << spread << " (" << std::setprecision(1)
-                  << spreadBps << " bps)\n";
+                << spreadBps << " bps)\n";
         std::cout << "Mid Price: $" << std::setprecision(2) << midPrice << "\n";
     }
 
     std::cout << "\nOrderbook Size: " << orderbook.Size() << " orders\n";
 
     // Display market data stats
-    const auto& stats = orderbook.GetMarketDataStats();
+    const auto &stats = orderbook.GetMarketDataStats();
     std::cout << "Messages Processed: " << stats.messagesProcessed << "\n";
     std::cout << "Average Latency: " << std::fixed << std::setprecision(3)
-              << stats.GetAverageLatencyMicros() << " μs\n";
+            << stats.GetAverageLatencyMicros() << " μs\n";
 
     std::cout << "========================================\n";
     std::cout << "\nPress Ctrl+C to exit...\n";
 }
 
-int main(int argc, char* argv[]) {
+int main(int argc, char *argv[]) {
     // Initialize curl
     curl_global_init(CURL_GLOBAL_DEFAULT);
 
@@ -213,18 +213,17 @@ int main(int argc, char* argv[]) {
                 } else {
                     std::cerr << "Failed to process market data\n";
                 }
-            } catch (const nlohmann::json::exception& e) {
+            } catch (const nlohmann::json::exception &e) {
                 std::cerr << "JSON parsing error: " << e.what() << "\n";
                 std::cerr << "Response: " << jsonResponse.substr(0, 200) << "...\n";
-            } catch (const std::exception& e) {
+            } catch (const std::exception &e) {
                 std::cerr << "Error processing data: " << e.what() << "\n";
             }
 
             // Wait before next update
             std::this_thread::sleep_for(std::chrono::seconds(refreshInterval));
         }
-
-    } catch (const std::exception& e) {
+    } catch (const std::exception &e) {
         std::cerr << "Fatal error: " << e.what() << "\n";
         curl_global_cleanup();
         return 1;

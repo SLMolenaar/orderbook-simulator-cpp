@@ -73,3 +73,18 @@ add_test(NAME OrderBookTests COMMAND OrderBookTests)
 # Print build information
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 message(STATUS "C++ Standard: ${CMAKE_CXX_STANDARD}")
+
+# Find clang-format
+find_program(CLANG_FORMAT "clang-format")
+
+if (CLANG_FORMAT)
+    # Get all source files
+    file(GLOB_RECURSE ALL_SOURCE_FILES *.cpp *.h)
+
+    # Add custom target for formatting
+    add_custom_target(
+            format
+            COMMAND ${CLANG_FORMAT} -i ${ALL_SOURCE_FILES}
+            COMMENT "Running clang-format"
+    )
+endif ()

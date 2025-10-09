@@ -145,11 +145,11 @@ TEST(TestMarketOrderEmptyBook) {
     ASSERT_EQ(orderbook.Size(), 0);
 }
 
-TEST(TestFillAndKill_PartialFill) {
+TEST(TestImmediateOrCancel_PartialFill) {
     Orderbook orderbook;
     orderbook.AddOrder(std::make_shared<Order>(OrderType::GoodTillCancel, 1, Side::Sell, 100, 5));
 
-    auto fakOrder = std::make_shared<Order>(OrderType::FillAndKill, 2, Side::Buy, 100, 10);
+    auto fakOrder = std::make_shared<Order>(OrderType::ImmediateOrCancel, 2, Side::Buy, 100, 10);
     auto trades = orderbook.AddOrder(fakOrder);
 
     ASSERT_EQ(trades.size(), 1);
@@ -157,11 +157,11 @@ TEST(TestFillAndKill_PartialFill) {
     ASSERT_EQ(orderbook.Size(), 0);
 }
 
-TEST(TestFillAndKill_NoMatch) {
+TEST(TestImmediateOrCancel_NoMatch) {
     Orderbook orderbook;
     orderbook.AddOrder(std::make_shared<Order>(OrderType::GoodTillCancel, 1, Side::Sell, 105, 10));
 
-    auto fakOrder = std::make_shared<Order>(OrderType::FillAndKill, 2, Side::Buy, 100, 10);
+    auto fakOrder = std::make_shared<Order>(OrderType::ImmediateOrCancel, 2, Side::Buy, 100, 10);
     auto trades = orderbook.AddOrder(fakOrder);
 
     ASSERT_TRUE(trades.empty());
@@ -269,10 +269,10 @@ void BenchmarkAddOrders(int numOrders) {
 
     std::cout << "Add " << formatNumber(numOrders) << " orders:\n";
     std::cout << "  Time: " << std::fixed << std::setprecision(2)
-              << duration.count() / 1000.0 << " ms\n";
+            << duration.count() / 1000.0 << " ms\n";
     std::cout << "  Throughput: " << formatNumber(ordersPerSec) << " orders/sec\n";
     std::cout << "  Latency: " << std::fixed << std::setprecision(3)
-              << (double)duration.count() / numOrders << " μs/order\n\n";
+            << (double) duration.count() / numOrders << " μs/order\n\n";
 }
 
 // Benchmark: Order matching performance
@@ -309,7 +309,7 @@ void BenchmarkMatching(int numOrders) {
 
     std::cout << "Match " << formatNumber(numOrders / 2) << " orders:\n";
     std::cout << "  Time: " << std::fixed << std::setprecision(2)
-              << duration.count() / 1000.0 << " ms\n";
+            << duration.count() / 1000.0 << " ms\n";
     std::cout << "  Trades executed: " << formatNumber(tradesExecuted) << "\n";
     std::cout << "  Throughput: " << formatNumber(matchesPerSec) << " matches/sec\n";
     std::cout << "  Trade rate: " << formatNumber(tradesPerSec) << " trades/sec\n\n";
@@ -331,7 +331,7 @@ void BenchmarkCancelOrders(int numOrders) {
     auto start = std::chrono::high_resolution_clock::now();
 
     // Cancel all orders and measure speed
-    for (auto orderId : orderIds) {
+    for (auto orderId: orderIds) {
         orderbook.CancelOrder(orderId);
     }
 
@@ -343,10 +343,10 @@ void BenchmarkCancelOrders(int numOrders) {
 
     std::cout << "Cancel " << formatNumber(numOrders) << " orders:\n";
     std::cout << "  Time: " << std::fixed << std::setprecision(2)
-              << duration.count() / 1000.0 << " ms\n";
+            << duration.count() / 1000.0 << " ms\n";
     std::cout << "  Throughput: " << formatNumber(cancelsPerSec) << " cancels/sec\n";
     std::cout << "  Latency: " << std::fixed << std::setprecision(3)
-              << (double)duration.count() / numOrders << " μs/cancel\n\n";
+            << (double) duration.count() / numOrders << " μs/cancel\n\n";
 }
 
 // Benchmark: Order modification performance (cancel + re-add)
@@ -369,7 +369,7 @@ void BenchmarkModifyOrders(int numOrders) {
     auto start = std::chrono::high_resolution_clock::now();
 
     // Modify all orders with new random prices/quantities
-    for (auto orderId : orderIds) {
+    for (auto orderId: orderIds) {
         OrderModify modify(orderId, Side::Buy, priceDist(gen), qtyDist(gen));
         orderbook.MatchOrder(modify);
     }
@@ -382,10 +382,10 @@ void BenchmarkModifyOrders(int numOrders) {
 
     std::cout << "Modify " << formatNumber(numOrders) << " orders:\n";
     std::cout << "  Time: " << std::fixed << std::setprecision(2)
-              << duration.count() / 1000.0 << " ms\n";
+            << duration.count() / 1000.0 << " ms\n";
     std::cout << "  Throughput: " << formatNumber(modifiesPerSec) << " modifies/sec\n";
     std::cout << "  Latency: " << std::fixed << std::setprecision(3)
-              << (double)duration.count() / numOrders << " μs/modify\n\n";
+            << (double) duration.count() / numOrders << " μs/modify\n\n";
 }
 
 // Benchmark: Market data snapshot generation
@@ -413,12 +413,12 @@ void BenchmarkGetOrderInfos(int numOrders, int numCalls) {
     long long callsPerSec = static_cast<long long>(numCalls / seconds);
 
     std::cout << "GetOrderInfos (" << formatNumber(numOrders) << " orders, "
-              << formatNumber(numCalls) << " calls):\n";
+            << formatNumber(numCalls) << " calls):\n";
     std::cout << "  Time: " << std::fixed << std::setprecision(2)
-              << duration.count() / 1000.0 << " ms\n";
+            << duration.count() / 1000.0 << " ms\n";
     std::cout << "  Throughput: " << formatNumber(callsPerSec) << " snapshots/sec\n";
     std::cout << "  Latency: " << std::fixed << std::setprecision(3)
-              << (double)duration.count() / numCalls << " μs/snapshot\n\n";
+            << (double) duration.count() / numCalls << " μs/snapshot\n\n";
 }
 
 // Simulates HFT trading by randomly adding, canceling and modifying orders.
@@ -478,8 +478,8 @@ void BenchmarkHighFrequencyTrading() {
 
     std::cout << "High-Frequency Trading Simulation:\n";
     std::cout << "  Operations: " << formatNumber(numOperations) << " (Add: "
-              << formatNumber(addCount) << ", Cancel: " << formatNumber(cancelCount)
-              << ", Modify: " << formatNumber(modifyCount) << ")\n";
+            << formatNumber(addCount) << ", Cancel: " << formatNumber(cancelCount)
+            << ", Modify: " << formatNumber(modifyCount) << ")\n";
     std::cout << "  Trades executed: " << formatNumber(tradeCount) << "\n";
     std::cout << "  Time: " << std::fixed << std::setprecision(2) << duration.count() << " ms\n";
     std::cout << "  Throughput: " << formatNumber(opsPerSec) << " operations/sec\n";
@@ -528,8 +528,8 @@ int main() {
     RUN_TEST(TestMarketOrderBuy);
     RUN_TEST(TestMarketOrderSell);
     RUN_TEST(TestMarketOrderEmptyBook);
-    RUN_TEST(TestFillAndKill_PartialFill);
-    RUN_TEST(TestFillAndKill_NoMatch);
+    RUN_TEST(TestImmediateOrCancel_PartialFill);
+    RUN_TEST(TestImmediateOrCancel_NoMatch);
     RUN_TEST(TestFillOrKill_FullFill);
     RUN_TEST(TestFillOrKill_PartialAvailable);
     RUN_TEST(TestFillOrKill_MultipleOrders);

@@ -8,11 +8,11 @@
 
 // Enum representing different types of market data messages
 enum class MessageType {
-    NewOrder,      // New order added to book
-    CancelOrder,   // Order cancelled
-    ModifyOrder,   // Order modified (price/quantity)
-    Trade,         // Trade executed
-    BookSnapshot   // Full book snapshot
+    NewOrder, // New order added to book
+    CancelOrder, // Order cancelled
+    ModifyOrder, // Order modified (price/quantity)
+    Trade, // Trade executed
+    BookSnapshot // Full book snapshot
 };
 
 // Market data message for a new order
@@ -57,7 +57,7 @@ struct TradeMessage {
 struct SnapshotLevel {
     Price price;
     Quantity quantity;
-    int orderCount;  // Number of orders at this level
+    int orderCount; // Number of orders at this level
 };
 
 // Market data message for full book snapshot
@@ -66,7 +66,7 @@ struct BookSnapshotMessage {
     std::vector<SnapshotLevel> bids;
     std::vector<SnapshotLevel> asks;
     std::chrono::system_clock::time_point timestamp;
-    uint64_t sequenceNumber;  // To detect gaps in feed
+    uint64_t sequenceNumber; // To detect gaps in feed
 };
 
 // Variant type that can hold any market data message
@@ -91,7 +91,7 @@ struct MarketDataStats {
     std::chrono::microseconds totalProcessingTime{0};
     std::chrono::microseconds maxLatency{0};
     std::chrono::microseconds minLatency{std::chrono::microseconds::max()};
-    
+
     void Reset() {
         messagesProcessed = 0;
         newOrders = 0;
@@ -105,7 +105,7 @@ struct MarketDataStats {
         maxLatency = std::chrono::microseconds{0};
         minLatency = std::chrono::microseconds::max();
     }
-    
+
     double GetAverageLatencyMicros() const {
         if (messagesProcessed == 0) return 0.0;
         return static_cast<double>(totalProcessingTime.count()) / messagesProcessed;
