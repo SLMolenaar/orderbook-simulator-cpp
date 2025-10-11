@@ -18,6 +18,7 @@
 #include "OrderType.h"
 #include "Constants.h"
 #include "MarketDataFeed.h"
+#include "ExchangeRules.h"
 
 class Orderbook {
 private:
@@ -40,6 +41,9 @@ private:
     uint64_t lastSequenceNumber_ = 0;
     bool isInitialized_ = false; // Track if we've received initial snapshot
 
+    // Exchange rules for order validation
+    ExchangeRules exchangeRules_;
+
     bool CanMatch(Side side, Price price) const {
         if (side == Side::Buy) {
             if (asks_.empty()) {
@@ -54,6 +58,45 @@ private:
             const auto &[bestBid, _] = *bids_.begin(); // Highest bid price
             return price <= bestBid; // Sell price must be <= bid price to match
         }
+    }
+
+    // Validate order against exchange rules
+    OrderValidation ValidateOrder(OrderPointer order) const {
+        // Check for duplicate order ID
+        if (orders_.contains(order->GetOrderId())) {
+            return OrderValidation::Reject(RejectReason::DuplicateOrderId);
+        }
+
+        // Validate price (skip for converted market orders with extreme prices)
+        Price orderPrice = order->GetPrice();
+        bool isConvertedMarketOrder = (orderPrice == std::numeric_limits<Price>::max() ||
+                                       orderPrice == std::numeric_limits<Price>::min());
+
+        if (!isConvertedMarketOrder) {
+            if (!exchangeRules_.IsValidPrice(orderPrice)) {
+                return OrderValidation::Reject(RejectReason::InvalidPrice);
+            }
+        }
+
+        // Validate quantity
+        if (!exchangeRules_.IsValidQuantity(order->GetRemainingQuantity())) {
+            if (order->GetRemainingQuantity() < exchangeRules_.minQuantity) {
+                return OrderValidation::Reject(RejectReason::BelowMinQuantity);
+            } else if (order->GetRemainingQuantity() > exchangeRules_.maxQuantity) {
+                return OrderValidation::Reject(RejectReason::AboveMaxQuantity);
+            } else {
+                return OrderValidation::Reject(RejectReason::InvalidQuantity);
+            }
+        }
+
+        // Validate minimum notional (skip for converted market orders)
+        if (!isConvertedMarketOrder) {
+            if (!exchangeRules_.IsValidNotional(order->GetPrice(), order->GetRemainingQuantity())) {
+                return OrderValidation::Reject(RejectReason::BelowMinNotional);
+            }
+        }
+
+        return OrderValidation::Accept();
     }
 
     void CheckAndResetDay() {
@@ -343,6 +386,16 @@ public:
         : lastDayReset_(std::chrono::system_clock::now()) {
     }
 
+    // Configure exchange trading rules
+    void SetExchangeRules(const ExchangeRules &rules) {
+        exchangeRules_ = rules;
+    }
+
+    // Get current exchange rules
+    const ExchangeRules &GetExchangeRules() const {
+        return exchangeRules_;
+    }
+
     // Set the time at which GoodForDay orders expire (default 15:59)
     void SetDayResetTime(int hour, int minute = 59) {
         if (hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59) {
@@ -352,13 +405,11 @@ public:
     }
 
     // Add new order to the orderbook and attempt to match
+    // Returns empty Trades if validation fails
     Trades AddOrder(OrderPointer order) {
         CheckAndResetDay(); // Check if we need to cancel GoodForDay orders
 
-        if (orders_.contains(order->GetOrderId())) {
-            return {}; // Duplicate order ID, reject
-        }
-
+        // Handle market orders first (convert to limit orders)
         if (order->GetOrderType() == OrderType::Market) {
             if (order->GetSide() == Side::Buy && !asks_.empty()) {
                 order->ToGoodTillCancel(std::numeric_limits<Price>::max());
@@ -368,6 +419,12 @@ public:
             } else {
                 return {}; // Empty book, reject market order
             }
+        }
+
+        // Validate order against exchange rules (after market order conversion)
+        auto validation = ValidateOrder(order);
+        if (!validation.isValid) {
+            return {}; // Reject invalid order
         }
 
         // IOC orders are rejected if they can't immediately match

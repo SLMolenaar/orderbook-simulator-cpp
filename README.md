@@ -49,8 +49,8 @@ matters.
 - CMake 3.10+
 - C++20 compatible compiler (GCC 10+, Clang 10+, MSVC 2019+)
 - Dependencies (automatically fetched via CMake):
-    - libcurl 8.4.0
-    - nlohmann/json 3.11.3
+- libcurl 8.4.0
+- nlohmann/json 3.11.3
 
 ### Build
 

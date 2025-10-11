@@ -18,6 +18,7 @@ set(HEADERS
         OrderBook.h
         Constants.h
         MarketDataFeed.h
+        ExchangeRules.h
 )
 
 # Test executable (functionality and performance tests)

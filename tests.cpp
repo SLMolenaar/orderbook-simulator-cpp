@@ -230,6 +230,71 @@ TEST(TestOrderbookLevelInfos) {
     ASSERT_EQ(infos.GetAsks()[0].quantity_, 20);
 }
 
+TEST(TestExchangeRulesBasic) {
+    Orderbook orderbook;
+    ExchangeRules rules;
+    rules.tickSize = 5; // Prices in multiples of 5 cents
+    rules.lotSize = 10; // Quantities in multiples of 10
+    rules.minQuantity = 10; // Minimum 10 shares
+    orderbook.SetExchangeRules(rules);
+
+    // Valid order
+    auto validOrder = std::make_shared<Order>(OrderType::GoodTillCancel, 1, Side::Buy, 100, 20);
+    orderbook.AddOrder(validOrder);
+    ASSERT_EQ(orderbook.Size(), 1);
+
+    // Invalid tick size
+    auto invalidTick = std::make_shared<Order>(OrderType::GoodTillCancel, 2, Side::Buy, 103, 20);
+    orderbook.AddOrder(invalidTick);
+    ASSERT_EQ(orderbook.Size(), 1); // Rejected
+
+    // Invalid lot size
+    auto invalidLot = std::make_shared<Order>(OrderType::GoodTillCancel, 3, Side::Buy, 100, 15);
+    orderbook.AddOrder(invalidLot);
+    ASSERT_EQ(orderbook.Size(), 1); // Rejected
+
+    // Below minimum quantity
+    auto belowMin = std::make_shared<Order>(OrderType::GoodTillCancel, 4, Side::Buy, 100, 5);
+    orderbook.AddOrder(belowMin);
+    ASSERT_EQ(orderbook.Size(), 1); // Rejected
+}
+
+TEST(TestMinNotionalValidation) {
+    Orderbook orderbook;
+    ExchangeRules rules;
+    rules.minNotional = 1000; // Minimum order value is 1000 cents ($10)
+    orderbook.SetExchangeRules(rules);
+
+    // Valid: 150 * 10 = 1500 >= 1000
+    auto validOrder = std::make_shared<Order>(OrderType::GoodTillCancel, 1, Side::Buy, 150, 10);
+    orderbook.AddOrder(validOrder);
+    ASSERT_EQ(orderbook.Size(), 1);
+
+    // Invalid: 50 * 10 = 500 < 1000
+    auto invalidOrder = std::make_shared<Order>(OrderType::GoodTillCancel, 2, Side::Buy, 50, 10);
+    orderbook.AddOrder(invalidOrder);
+    ASSERT_EQ(orderbook.Size(), 1); // Rejected
+}
+
+TEST(TestMarketOrderValidation) {
+    Orderbook orderbook;
+    ExchangeRules rules;
+    rules.lotSize = 10;
+    orderbook.SetExchangeRules(rules);
+    // Add liquidity
+    orderbook.AddOrder(std::make_shared<Order>(OrderType::GoodTillCancel, 1, Side::Sell, 100, 50));
+
+    // Valid market order (quantity is multiple of 10)
+    auto validMarket = std::make_shared<Order>(2, Side::Buy, 20);
+    auto trades = orderbook.AddOrder(validMarket);
+    ASSERT_EQ(trades.size(), 1);
+
+    // Invalid market order (quantity not multiple of 10)
+    auto invalidMarket = std::make_shared<Order>(3, Side::Buy, 15);
+    auto noTrades = orderbook.AddOrder(invalidMarket);
+    ASSERT_TRUE(noTrades.empty()); // Rejected
+}
+
 // ==================== PERFORMANCE TESTS ====================
 
 void PrintPerformanceHeader() {
@@ -535,8 +600,11 @@ int main() {
     RUN_TEST(TestFillOrKill_MultipleOrders);
     RUN_TEST(TestOrderModify);
     RUN_TEST(TestOrderbookLevelInfos);
+    RUN_TEST(TestExchangeRulesBasic);
+    RUN_TEST(TestMinNotionalValidation);
+    RUN_TEST(TestMarketOrderValidation);
 
-    std::cout << "\nAll " << 18 << " functionality tests passed!\n";
+    std::cout << "\nAll " << 21 << " functionality tests passed!\n";
 
     PrintPerformanceHeader();
 
