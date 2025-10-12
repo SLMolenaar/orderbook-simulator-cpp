@@ -19,6 +19,9 @@ public:
           , price_{price}
           , initialQuantity_{quantity}
           , remainingQuantity_{quantity} {
+        if (quantity == 0) {
+            throw std::invalid_argument("Order quantity must be greater than zero");
+        }
     }
 
     Order(OrderId orderId, Side side, Quantity quantity)

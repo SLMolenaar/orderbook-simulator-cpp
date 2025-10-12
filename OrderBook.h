@@ -238,6 +238,8 @@ private:
                 break; // No overlap in prices, can't match
             }
 
+            std::vector<OrderId> filledOrders;
+
             while (!bids.empty() && !asks.empty()) {
                 auto &bid = bids.front(); // FIFO: first order at this price level
                 auto &ask = asks.front();
@@ -256,13 +258,17 @@ private:
 
                 // Remove fully filled orders
                 if (bid->IsFilled()) {
-                    orders_.erase(bid->GetOrderId());
+                    filledOrders.push_back(bid->GetOrderId());
                     bids.pop_front();
                 }
                 if (ask->IsFilled()) {
-                    orders_.erase(ask->GetOrderId());
+                    filledOrders.push_back(ask->GetOrderId());
                     asks.pop_front();
                 }
+            }
+
+            for (const auto &orderId: filledOrders) {
+                orders_.erase(orderId);
             }
 
             // Remove empty price levels
@@ -274,24 +280,18 @@ private:
             }
         }
 
-        // Handle IOC orders: cancel unfilled portion
-        if (!bids_.empty()) {
-            auto &[_, bids] = *bids_.begin();
-            if (!bids.empty()) {
-                auto &order = bids.front();
-                if (order->GetOrderType() == OrderType::ImmediateOrCancel) {
-                    CancelOrder(order->GetOrderId());
-                }
+        // Handle IOC orders: cancel unfilled portion across all price levels
+        // We iterate through orders_ map instead of bids_/asks_ to avoid issues
+        // with container modification during iteration
+        std::vector<OrderId> iocOrdersToCancel;
+
+        for (const auto &[orderId, entry]: orders_) {
+            if (entry.order_->GetOrderType() == OrderType::ImmediateOrCancel) {
+                iocOrdersToCancel.push_back(orderId);
             }
         }
-        if (!asks_.empty()) {
-            auto &[_, asks] = *asks_.begin();
-            if (!asks.empty()) {
-                auto &order = asks.front();
-                if (order->GetOrderType() == OrderType::ImmediateOrCancel) {
-                    CancelOrder(order->GetOrderId());
-                }
-            }
+         for (const auto &orderId: iocOrdersToCancel) {
+            CancelOrder(orderId);
         }
 
         return trades;
@@ -299,17 +299,21 @@ private:
 
     // Internal method to handle new order message
     void ProcessNewOrder(const NewOrderMessage &msg) {
-        auto order = std::make_shared<Order>(
-            msg.orderType,
-            msg.orderId,
-            msg.side,
-            msg.price,
-            msg.quantity
-        );
-        auto trades = AddOrder(order);
-        stats_.newOrders++;
-        // Count trades that resulted from this order
-        stats_.trades += trades.size();
+        try {
+            auto order = std::make_shared<Order>(
+                msg.orderType,
+                msg.orderId,
+                msg.side,
+                msg.price,
+                msg.quantity
+            );
+            auto trades = AddOrder(order);
+            stats_.newOrders++;
+            // Count trades that resulted from this order
+            stats_.trades += trades.size();
+        } catch (const std::invalid_argument &) {
+            stats_.errors++;
+        }
     }
 
     // Internal method to handle cancel message
@@ -340,40 +344,52 @@ private:
         orders_.clear();
 
         // Rebuild from snapshot - using synthetic order IDs
-        OrderId syntheticId = 1000000; // Start high to avoid conflicts
+        OrderId syntheticId = 0x8000000000000000ULL;
 
         // Add bid levels
         for (const auto &level: msg.bids) {
             // Create orders representing the total quantity at this level
             // In reality, we wouldn't know individual orders, just aggregated levels
-            auto order = std::make_shared<Order>(
-                OrderType::GoodTillCancel,
-                syntheticId++,
-                Side::Buy,
-                level.price,
-                level.quantity
-            );
+            if (level.quantity == 0) continue;
 
-            auto &orders = bids_[level.price];
-            orders.push_back(order);
-            auto iterator = std::next(orders.begin(), orders.size() - 1);
-            orders_.insert({order->GetOrderId(), OrderEntry{order, iterator}});
+            try {
+                auto order = std::make_shared<Order>(
+                    OrderType::GoodTillCancel,
+                    syntheticId++,
+                    Side::Buy,
+                    level.price,
+                    level.quantity
+                );
+
+                auto &orders = bids_[level.price];
+                orders.push_back(order);
+                auto iterator = std::next(orders.begin(), orders.size() - 1);
+                orders_.insert({order->GetOrderId(), OrderEntry{order, iterator}});
+            } catch (const std::invalid_argument &) {
+                continue;
+            }
         }
 
         // Add ask levels
         for (const auto &level: msg.asks) {
-            auto order = std::make_shared<Order>(
-                OrderType::GoodTillCancel,
-                syntheticId++,
-                Side::Sell,
-                level.price,
-                level.quantity
-            );
+            if (level.quantity == 0) continue;
 
-            auto &orders = asks_[level.price];
-            orders.push_back(order);
-            auto iterator = std::next(orders.begin(), orders.size() - 1);
-            orders_.insert({order->GetOrderId(), OrderEntry{order, iterator}});
+            try {
+                auto order = std::make_shared<Order>(
+                    OrderType::GoodTillCancel,
+                    syntheticId++,
+                    Side::Sell,
+                    level.price,
+                    level.quantity
+                );
+
+                auto &orders = asks_[level.price];
+                orders.push_back(order);
+                auto iterator = std::next(orders.begin(), orders.size() - 1);
+                orders_.insert({order->GetOrderId(), OrderEntry{order, iterator}});
+            } catch (const std::invalid_argument &) {
+                continue;
+            }
         }
 
         isInitialized_ = true;

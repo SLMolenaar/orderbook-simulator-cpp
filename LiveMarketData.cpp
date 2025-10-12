@@ -81,14 +81,17 @@ std::string FormatTimestamp(const std::chrono::system_clock::time_point &tp) {
     return ss.str();
 }
 
-// Print orderbook in a nice format
 void PrintOrderbook(const Orderbook &orderbook, const std::string &symbol, int levels = 10) {
     auto infos = orderbook.GetOrderInfos();
     const auto &bids = infos.GetBids();
     const auto &asks = infos.GetAsks();
 
-    // Clear screen, works on windows
+    // Clear screen
+#ifdef _WIN32
     system("cls");
+#else
+    system("clear");
+#endif
 
     auto now = std::chrono::system_clock::now();
 
