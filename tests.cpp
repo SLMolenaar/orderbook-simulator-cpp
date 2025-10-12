@@ -65,8 +65,8 @@ TEST(TestSimpleMatch) {
 
     ASSERT_EQ(trades.size(), 1);
     ASSERT_EQ(orderbook.Size(), 0);
-    ASSERT_EQ(trades[0].GetBidTrade().quantity_, 10);
-    ASSERT_EQ(trades[0].GetAskTrade().quantity_, 10);
+    ASSERT_EQ(trades[0].bidTrade_.quantity_, 10);
+    ASSERT_EQ(trades[0].askTrade_.quantity_, 10);
 }
 
 TEST(TestPartialMatch) {
@@ -76,7 +76,7 @@ TEST(TestPartialMatch) {
 
     ASSERT_EQ(trades.size(), 1);
     ASSERT_EQ(orderbook.Size(), 1);
-    ASSERT_EQ(trades[0].GetBidTrade().quantity_, 10);
+    ASSERT_EQ(trades[0].bidTrade_.quantity_, 10);
 }
 
 TEST(TestMultipleMatchesAtSamePrice) {
@@ -99,8 +99,8 @@ TEST(TestPricePriority) {
     auto trades = orderbook.AddOrder(std::make_shared<Order>(OrderType::GoodTillCancel, 3, Side::Sell, 100, 10));
 
     ASSERT_EQ(trades.size(), 1);
-    ASSERT_EQ(trades[0].GetBidTrade().orderId_, 2);
-    ASSERT_EQ(trades[0].GetBidTrade().price_, 105); // checks if it sold to highest bidder
+    ASSERT_EQ(trades[0].bidTrade_.orderId_, 2);
+    ASSERT_EQ(trades[0].bidTrade_.price_, 105); // checks if it sold to highest bidder
 }
 
 TEST(TestTimePriority_FIFO) {
@@ -111,7 +111,7 @@ TEST(TestTimePriority_FIFO) {
     auto trades = orderbook.AddOrder(std::make_shared<Order>(OrderType::GoodTillCancel, 3, Side::Sell, 100, 10));
 
     ASSERT_EQ(trades.size(), 1);
-    ASSERT_EQ(trades[0].GetBidTrade().orderId_, 1);
+    ASSERT_EQ(trades[0].bidTrade_.orderId_, 1);
 }
 
 TEST(TestMarketOrderBuy) {
@@ -153,7 +153,7 @@ TEST(TestImmediateOrCancel_PartialFill) {
     auto trades = orderbook.AddOrder(fakOrder);
 
     ASSERT_EQ(trades.size(), 1);
-    ASSERT_EQ(trades[0].GetBidTrade().quantity_, 5);
+    ASSERT_EQ(trades[0].bidTrade_.quantity_, 5);
     ASSERT_EQ(orderbook.Size(), 0);
 }
 
@@ -176,7 +176,7 @@ TEST(TestFillOrKill_FullFill) {
     auto trades = orderbook.AddOrder(fokOrder);
 
     ASSERT_EQ(trades.size(), 1);
-    ASSERT_EQ(trades[0].GetBidTrade().quantity_, 10);
+    ASSERT_EQ(trades[0].bidTrade_.quantity_, 10);
     ASSERT_EQ(orderbook.Size(), 0);
 }
 
@@ -213,8 +213,8 @@ TEST(TestOrderModify) {
 
     ASSERT_EQ(orderbook.Size(), 1);
     auto infos = orderbook.GetOrderInfos();
-    ASSERT_EQ(infos.GetBids()[0].price_, 105);
-    ASSERT_EQ(infos.GetBids()[0].quantity_, 15);
+    ASSERT_EQ(infos.bids_[0].price_, 105);
+    ASSERT_EQ(infos.bids_[0].quantity_, 15);
 }
 
 TEST(TestOrderbookLevelInfos) {
@@ -224,10 +224,10 @@ TEST(TestOrderbookLevelInfos) {
     orderbook.AddOrder(std::make_shared<Order>(OrderType::GoodTillCancel, 3, Side::Sell, 105, 20));
 
     auto infos = orderbook.GetOrderInfos();
-    ASSERT_EQ(infos.GetBids().size(), 1);
-    ASSERT_EQ(infos.GetBids()[0].quantity_, 15);
-    ASSERT_EQ(infos.GetAsks().size(), 1);
-    ASSERT_EQ(infos.GetAsks()[0].quantity_, 20);
+    ASSERT_EQ(infos.bids_.size(), 1);
+    ASSERT_EQ(infos.bids_[0].quantity_, 15);
+    ASSERT_EQ(infos.asks_.size(), 1);
+    ASSERT_EQ(infos.asks_[0].quantity_, 20);
 }
 
 TEST(TestExchangeRulesBasic) {
@@ -520,7 +520,7 @@ void BenchmarkHighFrequencyTrading() {
             addCount++;
             tradeCount += trades.size();
             if (!order->IsFilled()) {
-                activeOrders.push_back(order->GetOrderId());
+                activeOrders.push_back(order->orderId_);
             }
         } else if (action == 1 && !activeOrders.empty()) {
             size_t idx = gen() % activeOrders.size();

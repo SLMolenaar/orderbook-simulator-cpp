@@ -1,3 +1,31 @@
+/**
+ * @file OrderBook.h
+ * @brief Central limit order book implementation
+ *
+ * This file contains the core matching engine that maintains buy and sell orders,
+ * executes trades, and enforces exchange rules. The order book uses price-time priority
+ * for matching and supports various order types (Market, GTC, IOC, FOK, GoodForDay).
+ *
+ * Key Features:
+ * - Price-time priority matching
+ * - Multiple order types (GTC, IOC, FOK, Market, GoodForDay)
+ * - Exchange rule validation (tick size, lot size, notional limits)
+ * - Market data feed integration
+ * - Day reset for GoodForDay orders
+ * - Performance tracking and statistics
+ *
+ * Data Structures:
+ * - bids_: Map of price levels to orders, sorted best (highest) price first
+ * - asks_: Map of price levels to orders, sorted best (lowest) price first
+ * - orders_: Hash map for O(1) order lookup by ID
+ *
+ * Complexity:
+ * - Add order: O(log P) where P is number of price levels
+ * - Cancel order: O(1) via hash map lookup + O(1) list deletion
+ * - Match orders: O(M) where M is number of matches
+ * - Get order info: O(P) to aggregate all price levels
+ */
+
 #pragma once
 
 #include <map>
@@ -19,31 +47,88 @@
 #include "Constants.h"
 #include "MarketDataFeed.h"
 #include "ExchangeRules.h"
+#include "Clock.h"
 
+/**
+ * @class Orderbook
+ * @brief Limit order book with price-time priority matching
+ *
+ * The Orderbook class implements a central limit order book (CLOB) that:
+ * - Maintains separate bid and ask sides sorted by price
+ * - Executes trades using price-time priority
+ * - Validates orders against exchange rules
+ * - Supports multiple order types with different behaviors
+ * - Integrates with external market data feeds
+ * - Tracks performance metrics
+ *
+ * **Thread Safety**: This implementation is NOT thread-safe. External synchronization
+ * is required for multi-threaded access.
+ *
+ * **Order Matching**: Uses price-time priority. Orders at the best price are matched
+ * first, and within a price level, orders are matched in the order they were added (FIFO).
+ *
+ * Example usage:
+ * @code
+ * Orderbook orderbook;
+ *
+ * // Configure exchange rules
+ * ExchangeRules rules;
+ * rules.tickSize = 1;
+ * rules.minQuantity = 100;
+ * orderbook.SetExchangeRules(rules);
+ *
+ * // Add orders
+ * auto buyOrder = std::make_shared<Order>(OrderType::GoodTillCancel, 1, Side::Buy, 100, 500);
+ * auto trades = orderbook.AddOrder(buyOrder);
+ *
+ * // Process trades
+ * for (const auto& trade : trades) {
+ *     std::cout << "Trade executed: " << trade.bidTrade_.quantity_ << " @ "
+ *               << trade.bidTrade_.price_ << std::endl;
+ * }
+ * @endcode
+ */
 class Orderbook {
 private:
-    // Helper struct to store order pointer and its position in the price level list
+    /**
+     * @struct OrderEntry
+     * @brief Internal structure linking an order to its position in the price level
+     *
+     * Stores both the order pointer and an iterator to its location in the
+     * price level list. This allows O(1) deletion when cancelling orders.
+     */
     struct OrderEntry {
-        OrderPointer order_{nullptr};
-        OrderPointers::iterator location_; // Iterator to quickly erase from list
+        OrderPointer order_{nullptr};              ///< Shared pointer to the order
+        OrderPointers::iterator location_;         ///< Iterator to order's position in price level list
     };
 
-    std::map<Price, OrderPointers, std::greater<Price> > bids_; // Buy orders: highest price first (best bid on top)
-    std::map<Price, OrderPointers, std::less<Price> > asks_; // Sell orders: lowest price first (best ask on top)
-    std::unordered_map<OrderId, OrderEntry> orders_; // Fast lookup: OrderId, OrderEntry for O(1) access
+    // ========== Data Structures ==========
 
-    std::chrono::system_clock::time_point lastDayReset_;
-    std::chrono::hours dayResetHour_{15}; // 3:59 PM - 1 minute before market close
-    int dayResetMinute_{59};
+    std::map<Price, OrderPointers, std::greater<Price>> bids_; ///< Buy orders: highest price first (best bid at top)
+    std::map<Price, OrderPointers, std::less<Price>> asks_;    ///< Sell orders: lowest price first (best ask at top)
+    std::unordered_map<OrderId, OrderEntry> orders_;           ///< Fast O(1) lookup: OrderId -> OrderEntry
+
+    Clock clock_{15, 59};                                      ///< Day reset clock (default 15:59 / 3:59 PM)
 
     // Market data feed tracking
-    MarketDataStats stats_;
-    uint64_t lastSequenceNumber_ = 0;
-    bool isInitialized_ = false; // Track if we've received initial snapshot
+    MarketDataStats stats_;                                    ///< Statistics for market data processing
+    uint64_t lastSequenceNumber_ = 0;                          ///< Last sequence number processed
+    bool isInitialized_ = false;                               ///< Whether initial snapshot received
 
     // Exchange rules for order validation
-    ExchangeRules exchangeRules_;
+    ExchangeRules exchangeRules_;                              ///< Trading rules and constraints
 
+    // ========== Private Helper Methods ==========
+
+    /**
+     * @brief Check if an order can match against the opposite side
+     * @param side Order side (Buy or Sell)
+     * @param price Order limit price
+     * @return true if there are orders on the opposite side at matchable prices
+     *
+     * For Buy orders: Can match if there's an ask at price <= buy price
+     * For Sell orders: Can match if there's a bid at price >= sell price
+     */
     bool CanMatch(Side side, Price price) const {
         if (side == Side::Buy) {
             if (asks_.empty()) {
@@ -60,15 +145,27 @@ private:
         }
     }
 
-    // Validate order against exchange rules
+    /**
+     * @brief Validate an order against all exchange rules
+     * @param order Order to validate
+     * @return OrderValidation result indicating acceptance or rejection with reason
+     *
+     * Checks:
+     * - Duplicate order ID
+     * - Valid price (tick size conformance)
+     * - Valid quantity (lot size and range)
+     * - Minimum notional value
+     *
+     * Special handling for converted market orders (extreme prices).
+     */
     OrderValidation ValidateOrder(OrderPointer order) const {
         // Check for duplicate order ID
-        if (orders_.contains(order->GetOrderId())) {
+        if (orders_.contains(order->orderId_)) {
             return OrderValidation::Reject(RejectReason::DuplicateOrderId);
         }
 
         // Validate price (skip for converted market orders with extreme prices)
-        Price orderPrice = order->GetPrice();
+        Price orderPrice = order->price_;
         bool isConvertedMarketOrder = (orderPrice == std::numeric_limits<Price>::max() ||
                                        orderPrice == std::numeric_limits<Price>::min());
 
@@ -79,10 +176,10 @@ private:
         }
 
         // Validate quantity
-        if (!exchangeRules_.IsValidQuantity(order->GetRemainingQuantity())) {
-            if (order->GetRemainingQuantity() < exchangeRules_.minQuantity) {
+        if (!exchangeRules_.IsValidQuantity(order->remainingQuantity_)) {
+            if (order->remainingQuantity_ < exchangeRules_.minQuantity) {
                 return OrderValidation::Reject(RejectReason::BelowMinQuantity);
-            } else if (order->GetRemainingQuantity() > exchangeRules_.maxQuantity) {
+            } else if (order->remainingQuantity_ > exchangeRules_.maxQuantity) {
                 return OrderValidation::Reject(RejectReason::AboveMaxQuantity);
             } else {
                 return OrderValidation::Reject(RejectReason::InvalidQuantity);
@@ -91,7 +188,7 @@ private:
 
         // Validate minimum notional (skip for converted market orders)
         if (!isConvertedMarketOrder) {
-            if (!exchangeRules_.IsValidNotional(order->GetPrice(), order->GetRemainingQuantity())) {
+            if (!exchangeRules_.IsValidNotional(order->price_, order->remainingQuantity_)) {
                 return OrderValidation::Reject(RejectReason::BelowMinNotional);
             }
         }
@@ -100,23 +197,9 @@ private:
     }
 
     void CheckAndResetDay() {
-        auto now = std::chrono::system_clock::now();
-        auto nowTime = std::chrono::system_clock::to_time_t(now);
-        auto lastResetTime = std::chrono::system_clock::to_time_t(lastDayReset_);
-
-        std::tm nowTm = *std::localtime(&nowTime);
-
-        // Calculate today's reset time
-        std::tm todayResetTm = nowTm;
-        todayResetTm.tm_hour = dayResetHour_.count();
-        todayResetTm.tm_min = dayResetMinute_;
-        todayResetTm.tm_sec = 0;
-        auto todayResetTime = std::mktime(&todayResetTm);
-
-        // If lastReset was before today's reset time AND we're now past it
-        if (lastResetTime < todayResetTime && nowTime >= todayResetTime) {
+        if (clock_.ShouldResetDay()) {
             CancelGoodForDayOrders();
-            lastDayReset_ = now;
+            clock_.MarkResetOccurred();
         }
     }
 
@@ -125,7 +208,7 @@ private:
 
         // add all GoodForDay orders to the ordersToCancel vector
         for (const auto &[orderId, entry]: orders_) {
-            if (entry.order_->GetOrderType() == OrderType::GoodForDay) {
+            if (entry.order_->orderType_ == OrderType::GoodForDay) {
                 ordersToCancel.push_back(orderId);
             }
         }
@@ -143,13 +226,13 @@ private:
 
         std::vector<std::pair<OrderPointer, Quantity> > matchingOrders;
 
-        if (order->GetSide() == Side::Buy) {
+        if (order->side_ == Side::Buy) {
             // Match against asks (sell orders)
             for (auto &[askPrice, askOrders]: asks_) {
-                if (askPrice > order->GetPrice()) break; // Price too high
+                if (askPrice > order->price_) break; // Price too high
 
                 for (auto &ask: askOrders) {
-                    Quantity matchQty = std::min(remainingQuantity, ask->GetRemainingQuantity());
+                    Quantity matchQty = std::min(remainingQuantity, ask->remainingQuantity_);
                     matchingOrders.push_back({ask, matchQty});
                     remainingQuantity -= matchQty;
                     if (remainingQuantity == 0) break;
@@ -159,10 +242,10 @@ private:
         } else {
             // Match against bids (buy orders)
             for (auto &[bidPrice, bidOrders]: bids_) {
-                if (bidPrice < order->GetPrice()) break; // Price too low
+                if (bidPrice < order->price_) break; // Price too low
 
                 for (auto &bid: bidOrders) {
-                    Quantity matchQty = std::min(remainingQuantity, bid->GetRemainingQuantity());
+                    Quantity matchQty = std::min(remainingQuantity, bid->remainingQuantity_);
                     matchingOrders.push_back({bid, matchQty});
                     remainingQuantity -= matchQty;
                     if (remainingQuantity == 0) break;
@@ -186,21 +269,21 @@ private:
             matchOrder->Fill(quantity);
 
             // Record trade
-            if (order->GetSide() == Side::Buy) {
+            if (order->side_ == Side::Buy) {
                 trades.push_back(Trade{
-                    TradeInfo{order->GetOrderId(), order->GetPrice(), quantity},
-                    TradeInfo{matchOrder->GetOrderId(), matchOrder->GetPrice(), quantity}
+                    TradeInfo{order->orderId_, order->price_, quantity},
+                    TradeInfo{matchOrder->orderId_, matchOrder->price_, quantity}
                 });
             } else {
                 trades.push_back(Trade{
-                    TradeInfo{matchOrder->GetOrderId(), matchOrder->GetPrice(), quantity},
-                    TradeInfo{order->GetOrderId(), order->GetPrice(), quantity}
+                    TradeInfo{matchOrder->orderId_, matchOrder->price_, quantity},
+                    TradeInfo{order->orderId_, order->price_, quantity}
                 });
             }
 
             // Remove filled orders from the book
             if (matchOrder->IsFilled()) {
-                CancelOrder(matchOrder->GetOrderId());
+                CancelOrder(matchOrder->orderId_);
             }
         }
 
@@ -209,7 +292,7 @@ private:
 
     // Handle FillOrKill order
     Trades MatchFillOrKill(OrderPointer order) {
-        Quantity remainingQuantity = order->GetRemainingQuantity();
+        Quantity remainingQuantity = order->remainingQuantity_;
 
         // Collect all potential matches without modifying the book
         auto matchingOrders = CollectMatchesForFillOrKill(order, remainingQuantity);
@@ -243,12 +326,12 @@ private:
                 auto &ask = asks.front();
 
                 // Match the minimum available quantity
-                Quantity quantity = std::min(bid->GetRemainingQuantity(), ask->GetRemainingQuantity());
+                Quantity quantity = std::min(bid->remainingQuantity_, ask->remainingQuantity_);
 
                 // Record the trade before modifying orders
                 trades.push_back(Trade{
-                    TradeInfo{bid->GetOrderId(), bid->GetPrice(), quantity},
-                    TradeInfo{ask->GetOrderId(), ask->GetPrice(), quantity}
+                    TradeInfo{bid->orderId_, bid->price_, quantity},
+                    TradeInfo{ask->orderId_, ask->price_, quantity}
                 });
 
                 bid->Fill(quantity); // Reduce remaining quantity
@@ -256,11 +339,11 @@ private:
 
                 // Remove fully filled orders
                 if (bid->IsFilled()) {
-                    orders_.erase(bid->GetOrderId());
+                    orders_.erase(bid->orderId_);
                     bids.pop_front();
                 }
                 if (ask->IsFilled()) {
-                    orders_.erase(ask->GetOrderId());
+                    orders_.erase(ask->orderId_);
                     asks.pop_front();
                 }
             }
@@ -275,23 +358,31 @@ private:
         }
 
         // Handle IOC orders: cancel unfilled portion
+        std::vector<OrderId> iocOrdersToCancel;
+
+        // Check all IOC orders in bids
         if (!bids_.empty()) {
             auto &[_, bids] = *bids_.begin();
-            if (!bids.empty()) {
-                auto &order = bids.front();
-                if (order->GetOrderType() == OrderType::ImmediateOrCancel) {
-                    CancelOrder(order->GetOrderId());
+            for (const auto &order : bids) {
+                if (order->orderType_ == OrderType::ImmediateOrCancel && order->remainingQuantity_ > 0) {
+                    iocOrdersToCancel.push_back(order->orderId_);
                 }
             }
         }
+
+        // Check all IOC orders in asks
         if (!asks_.empty()) {
             auto &[_, asks] = *asks_.begin();
-            if (!asks.empty()) {
-                auto &order = asks.front();
-                if (order->GetOrderType() == OrderType::ImmediateOrCancel) {
-                    CancelOrder(order->GetOrderId());
+            for (const auto &order : asks) {
+                if (order->orderType_ == OrderType::ImmediateOrCancel && order->remainingQuantity_ > 0) {
+                    iocOrdersToCancel.push_back(order->orderId_);
                 }
             }
+        }
+
+        // Cancel all IOC orders with remaining quantity
+        for (const auto &orderId : iocOrdersToCancel) {
+            CancelOrder(orderId);
         }
 
         return trades;
@@ -356,8 +447,8 @@ private:
 
             auto &orders = bids_[level.price];
             orders.push_back(order);
-            auto iterator = std::next(orders.begin(), orders.size() - 1);
-            orders_.insert({order->GetOrderId(), OrderEntry{order, iterator}});
+            auto iterator = std::prev(orders.end());
+            orders_.insert({order->orderId_, OrderEntry{order, iterator}});
         }
 
         // Add ask levels
@@ -372,8 +463,8 @@ private:
 
             auto &orders = asks_[level.price];
             orders.push_back(order);
-            auto iterator = std::next(orders.begin(), orders.size() - 1);
-            orders_.insert({order->GetOrderId(), OrderEntry{order, iterator}});
+            auto iterator = std::prev(orders.end());
+            orders_.insert({order->orderId_, OrderEntry{order, iterator}});
         }
 
         isInitialized_ = true;
@@ -382,9 +473,7 @@ private:
     }
 
 public:
-    Orderbook()
-        : lastDayReset_(std::chrono::system_clock::now()) {
-    }
+    Orderbook() = default;
 
     // Configure exchange trading rules
     void SetExchangeRules(const ExchangeRules &rules) {
@@ -398,10 +487,7 @@ public:
 
     // Set the time at which GoodForDay orders expire (default 15:59)
     void SetDayResetTime(int hour, int minute = 59) {
-        if (hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59) {
-            dayResetHour_ = std::chrono::hours(hour);
-            dayResetMinute_ = minute;
-        }
+        clock_.SetResetTime(hour, minute);
     }
 
     // Add new order to the orderbook and attempt to match
@@ -410,11 +496,11 @@ public:
         CheckAndResetDay(); // Check if we need to cancel GoodForDay orders
 
         // Handle market orders first (convert to limit orders)
-        if (order->GetOrderType() == OrderType::Market) {
-            if (order->GetSide() == Side::Buy && !asks_.empty()) {
+        if (order->orderType_ == OrderType::Market) {
+            if (order->side_ == Side::Buy && !asks_.empty()) {
                 order->ToGoodTillCancel(std::numeric_limits<Price>::max());
                 // Converts order to GoodTillCancel order, but willing to take any price
-            } else if (order->GetSide() == Side::Sell && !bids_.empty()) {
+            } else if (order->side_ == Side::Sell && !bids_.empty()) {
                 order->ToGoodTillCancel(std::numeric_limits<Price>::min());
             } else {
                 return {}; // Empty book, reject market order
@@ -428,30 +514,30 @@ public:
         }
 
         // IOC orders are rejected if they can't immediately match
-        if (order->GetOrderType() == OrderType::ImmediateOrCancel && !CanMatch(order->GetSide(), order->GetPrice())) {
+        if (order->orderType_ == OrderType::ImmediateOrCancel && !CanMatch(order->side_, order->price_)) {
             return {};
         }
 
         // FillOrKill orders, special handling (all or nothing)
-        if (order->GetOrderType() == OrderType::FillOrKill) {
+        if (order->orderType_ == OrderType::FillOrKill) {
             return MatchFillOrKill(order); // Handle without adding to book
         }
 
         OrderPointers::iterator iterator;
 
         // Add to appropriate side (buy or sell)
-        if (order->GetSide() == Side::Buy) {
-            auto &orders = bids_[order->GetPrice()]; // Get or create price level
+        if (order->side_ == Side::Buy) {
+            auto &orders = bids_[order->price_]; // Get or create price level
             orders.push_back(order); // Add to end (FIFO within price level)
             iterator = std::next(orders.begin(), orders.size() - 1); // Get iterator to new order
         } else {
-            auto &orders = asks_[order->GetPrice()];
+            auto &orders = asks_[order->price_];
             orders.push_back(order);
             iterator = std::next(orders.begin(), orders.size() - 1);
         }
 
         // Store in lookup map with its location
-        orders_.insert({order->GetOrderId(), OrderEntry{order, iterator}});
+        orders_.insert({order->orderId_, OrderEntry{order, iterator}});
 
         return MatchOrders(); // Try to match and return resulting trades
     }
@@ -466,15 +552,15 @@ public:
         orders_.erase(orderId); // Remove from lookup map
 
         // Remove from price level list
-        if (order->GetSide() == Side::Sell) {
-            auto price = order->GetPrice();
+        if (order->side_ == Side::Sell) {
+            auto price = order->price_;
             auto &orders = asks_.at(price);
             orders.erase(orderIterator); // O(1) erase using stored iterator
             if (orders.empty()) {
                 asks_.erase(price); // Remove empty price level
             }
         } else {
-            auto price = order->GetPrice();
+            auto price = order->price_;
             auto &orders = bids_.at(price);
             orders.erase(orderIterator);
             if (orders.empty()) {
@@ -487,13 +573,13 @@ public:
     Trades MatchOrder(OrderModify order) {
         CheckAndResetDay(); // Check if we need to cancel GoodForDay orders
 
-        if (!orders_.contains(order.GetOrderId())) {
+        if (!orders_.contains(order.orderId_)) {
             return {}; // Order doesn't exist
         }
 
-        const auto &[existingOrder, _] = orders_.at(order.GetOrderId());
-        CancelOrder(order.GetOrderId()); // Remove old order
-        return AddOrder(order.ToOrderPointer(existingOrder->GetOrderType())); // Add modified order
+        const auto &[existingOrder, _] = orders_.at(order.orderId_);
+        CancelOrder(order.orderId_); // Remove old order
+        return AddOrder(order.ToOrderPointer(existingOrder->orderType_)); // Add modified order
     }
 
     // Get total number of active orders
@@ -509,8 +595,8 @@ public:
         auto CreateLevelInfos = [](Price price, const OrderPointers &orders) {
             return LevelInfo{
                 price, std::accumulate(orders.begin(), orders.end(), (Quantity) 0,
-                                       [](std::size_t runningSum, const OrderPointer &order) {
-                                           return runningSum + order->GetRemainingQuantity();
+                                       [](Quantity runningSum, const OrderPointer &order) {
+                                           return runningSum + order->remainingQuantity_;
                                        })
             };
         };
