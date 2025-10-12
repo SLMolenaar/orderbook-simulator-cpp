@@ -1,5 +1,4 @@
 #include <iostream>
-#include <curl/curl.h>
 #include <nlohmann/json.hpp>
 #include <thread>
 #include <chrono>
@@ -7,41 +6,18 @@
 #include <ctime>
 #include <sstream>
 #include "OrderBook.h"
-
-// Callback function for libcurl to write response data
-size_t WriteCallback(void *contents, size_t size, size_t nmemb, std::string *userp) {
-    size_t totalSize = size * nmemb;
-    userp->append((char *) contents, totalSize);
-    return totalSize;
-}
+#include "CurlClient.h"
 
 // Fetch orderbook snapshot from Binance REST API
-std::string FetchBinanceOrderbook(const std::string &symbol, int limit = 20) {
-    CURL *curl;
-    CURLcode res;
-    std::string readBuffer;
+std::string FetchBinanceOrderbook(CurlClient& client, const std::string &symbol, int limit = 20) {
+    std::string url = "https://api.binance.com/api/v3/depth?symbol=" + symbol + "&limit=" + std::to_string(limit);
 
-    curl = curl_easy_init();
-    if (curl) {
-        std::string url = "https://api.binance.com/api/v3/depth?symbol=" + symbol + "&limit=" + std::to_string(limit);
-
-        curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
-        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
-        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &readBuffer);
-        curl_easy_setopt(curl, CURLOPT_TIMEOUT, 10L);
-        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYPEER, 1L);
-        curl_easy_setopt(curl, CURLOPT_SSL_VERIFYHOST, 2L);
-
-        res = curl_easy_perform(curl);
-
-        if (res != CURLE_OK) {
-            std::cerr << "curl_easy_perform() failed: " << curl_easy_strerror(res) << std::endl;
-        }
-
-        curl_easy_cleanup(curl);
+    try {
+        return client.Get(url);
+    } catch (const std::exception& e) {
+        std::cerr << "HTTP request failed: " << e.what() << std::endl;
+        return "";
     }
-
-    return readBuffer;
 }
 
 // Convert Binance JSON response to BookSnapshotMessage
@@ -84,11 +60,15 @@ std::string FormatTimestamp(const std::chrono::system_clock::time_point &tp) {
 // Print orderbook in a nice format
 void PrintOrderbook(const Orderbook &orderbook, const std::string &symbol, int levels = 10) {
     auto infos = orderbook.GetOrderInfos();
-    const auto &bids = infos.GetBids();
-    const auto &asks = infos.GetAsks();
+    const auto &bids = infos.bids_;
+    const auto &asks = infos.asks_;
 
-    // Clear screen, works on windows
+    // Clear screen - cross-platform
+#ifdef _WIN32
     system("cls");
+#else
+    system("clear");
+#endif
 
     auto now = std::chrono::system_clock::now();
 
@@ -159,9 +139,6 @@ void PrintOrderbook(const Orderbook &orderbook, const std::string &symbol, int l
 }
 
 int main(int argc, char *argv[]) {
-    // Initialize curl
-    curl_global_init(CURL_GLOBAL_DEFAULT);
-
     // Default to SOL/USDT, but allow command line override
     std::string symbol = "SOLUSDT";
     int refreshInterval = 1; // seconds
@@ -189,13 +166,15 @@ int main(int argc, char *argv[]) {
 
     std::this_thread::sleep_for(std::chrono::seconds(2));
 
+    // Initialize HTTP client
+    CurlClient curlClient;
     Orderbook orderbook;
 
     try {
         // Main loop, fetch and display orderbook
         while (true) {
             // Fetch snapshot from Binance
-            std::string jsonResponse = FetchBinanceOrderbook(symbol, displayLevels);
+            std::string jsonResponse = FetchBinanceOrderbook(curlClient, symbol, displayLevels);
 
             if (jsonResponse.empty()) {
                 std::cerr << "Failed to fetch orderbook data\n";
@@ -225,12 +204,12 @@ int main(int argc, char *argv[]) {
         }
     } catch (const std::exception &e) {
         std::cerr << "Fatal error: " << e.what() << "\n";
-        curl_global_cleanup();
+        CurlClient::GlobalCleanup();
         return 1;
     }
 
     // Cleanup
-    curl_global_cleanup();
+    CurlClient::GlobalCleanup();
 
     return 0;
 }

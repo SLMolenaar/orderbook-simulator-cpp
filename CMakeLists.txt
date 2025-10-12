@@ -19,6 +19,7 @@ set(HEADERS
         Constants.h
         MarketDataFeed.h
         ExchangeRules.h
+        CurlClient.h
 )
 
 # Test executable (functionality and performance tests)
@@ -26,35 +27,37 @@ add_executable(OrderBookTests
         tests.cpp
 )
 
-# Fetch dependencies
-include(FetchContent)
+#
+# External dependencies
+# First tries to use system-installed dependencies
+# Falls back to pre-built dependencies from build_deps.sh
+#
 
-# Fetch nlohmann_json
-FetchContent_Declare(
-        json
-        URL https://github.com/nlohmann/json/releases/download/v3.11.3/json.tar.xz
-)
-FetchContent_MakeAvailable(json)
+# Check for ORDERBOOK_DEPS_DIR environment variable
+if(DEFINED ENV{ORDERBOOK_DEPS_DIR})
+    set(DEPS_DIR $ENV{ORDERBOOK_DEPS_DIR})
+    message(STATUS "ORDERBOOK_DEPS_DIR set to: ${DEPS_DIR}")
+else()
+    # Default to ~/.cache/orderbook-deps/install
+    set(DEPS_DIR "$ENV{HOME}/.cache/orderbook-deps/install")
+endif()
 
-# Fetch CURL with SSL support for Windows
-FetchContent_Declare(
-        curl
-        GIT_REPOSITORY https://github.com/curl/curl.git
-        GIT_TAG curl-8_4_0
-)
+# Check if pre-built dependencies exist
+if(EXISTS "${DEPS_DIR}/.deps_built")
+    # Read dependency versions
+    file(STRINGS "${DEPS_DIR}/.deps_built" DEPS_INFO)
+    message(STATUS "Pre-built dependencies available at ${DEPS_DIR}")
+    message(STATUS "  Versions: ${DEPS_INFO}")
+else()
+    message(STATUS "Pre-built dependencies not found at ${DEPS_DIR}")
+    message(STATUS "  Will attempt to use system-installed libraries")
+    message(STATUS "  To build dependencies, run: ./build_deps.sh")
+endif()
 
-# Configure CURL options
-set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
-set(CURL_STATICLIB ON CACHE BOOL "" FORCE)
-set(BUILD_CURL_EXE OFF CACHE BOOL "" FORCE)
-set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
-set(HTTP_ONLY ON CACHE BOOL "" FORCE)
-set(CURL_DISABLE_LDAP ON CACHE BOOL "" FORCE)
-set(CURL_DISABLE_LDAPS ON CACHE BOOL "" FORCE)
-set(CURL_USE_SCHANNEL ON CACHE BOOL "Use Windows native SSL" FORCE)
-set(CMAKE_USE_SCHANNEL ON CACHE BOOL "" FORCE)
-
-FetchContent_MakeAvailable(curl)
+# Include dependency configurations
+include(cmake/nlohmann_json.cmake)
+include(cmake/openssl.cmake)
+include(cmake/libcurl.cmake)
 
 # Live market data executable
 add_executable(LiveMarketData
