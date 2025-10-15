@@ -6,7 +6,6 @@
 #include <stdexcept>
 #include "Types.h"
 #include "OrderType.h"
-#include "Order.h"
 #include "Constants.h"
 
 class Order {
