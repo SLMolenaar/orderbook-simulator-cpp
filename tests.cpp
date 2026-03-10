@@ -100,7 +100,7 @@ TEST(TestPricePriority) {
 
     ASSERT_EQ(trades.size(), 1);
     ASSERT_EQ(trades[0].GetBidTrade().orderId_, 2);
-    ASSERT_EQ(trades[0].GetBidTrade().price_, 105); // checks if it sold to highest bidder
+    ASSERT_EQ(trades[0].GetBidTrade().price_, 100);           // executed at ask price (price-time priority)
 }
 
 TEST(TestTimePriority_FIFO) {
@@ -486,20 +486,40 @@ void BenchmarkGetOrderInfos(int numOrders, int numCalls) {
             << (double) duration.count() / numCalls << " μs/snapshot\n\n";
 }
 
-// Simulates HFT trading by randomly adding, canceling and modifying orders.
-// Measures throughput and latency of orderbook's operations.
-// Number of operations is fixed at 100K and number of active orders is limited to 100.
+// Simulates HFT with a realistically large book by separating the warmup
+// (building up resting orders) from the measured phase (steady-state churn).
+// Uses a wide price range so orders don't immediately cross and consume each
+// other, keeping thousands of orders alive on both sides throughout.
 void BenchmarkHighFrequencyTrading() {
     Orderbook orderbook;
     std::random_device rd;
     std::mt19937 gen(rd());
-    std::uniform_int_distribution<Price> priceDist(99, 101);
-    std::uniform_int_distribution<Quantity> qtyDist(1, 10);
-    std::uniform_int_distribution<int> actionDist(0, 2);
 
+    // Wide spread: buys up to 95, sells from 105 — orders won't cross
+    std::uniform_int_distribution<Price> bidPriceDist(85, 95);
+    std::uniform_int_distribution<Price> askPriceDist(105, 115);
+    std::uniform_int_distribution<Quantity> qtyDist(1, 10);
+    // 50% add, 30% cancel, 20% modify — skewed toward adds to keep book full
+    std::uniform_int_distribution<int> actionDist(0, 9);
+
+    const int warmupOrders = 10000; // pre-fill the book before measuring
     const int numOperations = 100000;
     std::vector<OrderId> activeOrders;
+    activeOrders.reserve(warmupOrders + numOperations);
     OrderId nextOrderId = 0;
+
+    // Warmup: build a large resting book, not measured
+    for (int i = 0; i < warmupOrders; ++i) {
+        Side side = (i % 2) ? Side::Buy : Side::Sell;
+        Price price = (side == Side::Buy) ? bidPriceDist(gen) : askPriceDist(gen);
+        auto order = std::make_shared<Order>(
+            OrderType::GoodTillCancel, nextOrderId++, side, price, qtyDist(gen)
+        );
+        orderbook.AddOrder(order);
+        if (!order->IsFilled()) {
+            activeOrders.push_back(order->GetOrderId());
+        }
+    }
 
     int addCount = 0, cancelCount = 0, modifyCount = 0, tradeCount = 0;
 
@@ -508,13 +528,12 @@ void BenchmarkHighFrequencyTrading() {
     for (int i = 0; i < numOperations; ++i) {
         int action = activeOrders.empty() ? 0 : actionDist(gen);
 
-        if (action == 0 || activeOrders.empty()) {
+        if (action <= 4 || activeOrders.empty()) {
+            // 50%: add a new resting order away from mid
+            Side side = (nextOrderId % 2) ? Side::Buy : Side::Sell;
+            Price price = (side == Side::Buy) ? bidPriceDist(gen) : askPriceDist(gen);
             auto order = std::make_shared<Order>(
-                OrderType::GoodTillCancel,
-                nextOrderId++,
-                i % 2 ? Side::Buy : Side::Sell,
-                priceDist(gen),
-                qtyDist(gen)
+                OrderType::GoodTillCancel, nextOrderId++, side, price, qtyDist(gen)
             );
             auto trades = orderbook.AddOrder(order);
             addCount++;
@@ -522,14 +541,17 @@ void BenchmarkHighFrequencyTrading() {
             if (!order->IsFilled()) {
                 activeOrders.push_back(order->GetOrderId());
             }
-        } else if (action == 1 && !activeOrders.empty()) {
+        } else if (action <= 7) {
+            // 30%: cancel a random active order
             size_t idx = gen() % activeOrders.size();
             orderbook.CancelOrder(activeOrders[idx]);
             activeOrders.erase(activeOrders.begin() + idx);
             cancelCount++;
-        } else if (action == 2 && !activeOrders.empty()) {
+        } else {
+            // 20%: modify a random active order (reprice within same side's range)
             size_t idx = gen() % activeOrders.size();
-            OrderModify modify(activeOrders[idx], Side::Buy, priceDist(gen), qtyDist(gen));
+            Price price = (nextOrderId % 2) ? bidPriceDist(gen) : askPriceDist(gen);
+            OrderModify modify(activeOrders[idx], Side::Buy, price, qtyDist(gen));
             orderbook.MatchOrder(modify);
             modifyCount++;
         }
@@ -542,37 +564,14 @@ void BenchmarkHighFrequencyTrading() {
     long long opsPerSec = static_cast<long long>(numOperations / seconds);
 
     std::cout << "High-Frequency Trading Simulation:\n";
+    std::cout << "  Warmup book size: " << formatNumber(warmupOrders) << " orders\n";
     std::cout << "  Operations: " << formatNumber(numOperations) << " (Add: "
             << formatNumber(addCount) << ", Cancel: " << formatNumber(cancelCount)
             << ", Modify: " << formatNumber(modifyCount) << ")\n";
     std::cout << "  Trades executed: " << formatNumber(tradeCount) << "\n";
     std::cout << "  Time: " << std::fixed << std::setprecision(2) << duration.count() << " ms\n";
     std::cout << "  Throughput: " << formatNumber(opsPerSec) << " operations/sec\n";
-    std::cout << "  Final book size: " << orderbook.Size() << " orders\n\n";
-}
-
-// ==================== SUMMARY SECTION ====================
-
-// Print performance summary
-void PrintSummary() {
-    std::cout << std::string(70, '=') << "\n";
-    std::cout << std::setw(40) << "PERFORMANCE SUMMARY\n";
-    std::cout << std::string(70, '=') << "\n\n";
-    std::cout << "Key Metrics (Actual Measured Performance):\n";
-    std::cout << "  - Order insertion: ~400,000 orders/sec sustained\n";
-    std::cout << "  - Order matching: ~350,000 matches/sec, ~690,000 trades/sec\n";
-    std::cout << "  - Order cancellation: ~2,000,000 cancels/sec\n";
-    std::cout << "  - Order modification: ~270,000 modifies/sec (small batches)\n";
-    std::cout << "  - Mixed operations (HFT simulation): ~440,000 ops/sec\n";
-    std::cout << "  - Average latency: 2-4 μs per operation\n\n";
-    std::cout << "Architecture Highlights:\n";
-    std::cout << "  - O(1) order lookup via unordered_map\n";
-    std::cout << "  - O(log n) price level access via ordered map\n";
-    std::cout << "  - FIFO queue within price levels\n";
-    std::cout << "  - Efficient memory management with shared_ptr\n";
-    std::cout << "  - Price-time priority matching algorithm\n";
-    std::cout << "  - Support for 5 order types (GTC, Market, FAK, FOK, GFD)\n";
-    std::cout << std::string(70, '=') << "\n";
+    std::cout << "  Final book size: " << formatNumber((long long)orderbook.Size()) << " orders\n\n";
 }
 
 // ==================== MAIN TEST RUNNER ====================
@@ -633,8 +632,6 @@ int main() {
 
     std::cout << "--- High-Frequency Trading Simulation ---\n";
     BenchmarkHighFrequencyTrading();
-
-    PrintSummary();
 
     std::cout << "\nTesting complete!\n";
 

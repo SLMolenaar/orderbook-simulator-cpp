@@ -8,9 +8,9 @@ class OrderModify {
 public:
     OrderModify(OrderId orderId, Side side, Price price, Quantity quantity)
         : orderId_{orderId}
-          , price_{price}
-          , side_{side}
-          , quantity_{quantity} {
+    , price_{price}
+    , side_{side}
+    , quantity_{quantity} {
     }
 
     OrderId GetOrderId() const { return orderId_; }
@@ -19,7 +19,7 @@ public:
     Quantity GetQuantity() const { return quantity_; }
 
     OrderPointer ToOrderPointer(OrderType type) const {
-        // Converts modification to to a new order
+        // Converts modification to new order
         return std::make_shared<Order>(type, GetOrderId(), GetSide(), GetPrice(), GetQuantity());
     }
 
