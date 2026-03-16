@@ -11,10 +11,11 @@ matters.
 
 **Key metrics:**
 
-- Order insertion: ~400,000 orders/sec
-- Order matching: ~350,000 matches/sec
-- Order cancellation: ~2,000,000 cancels/sec
-- Average operation latency: 2-4 μs
+- Order insertion: ~2,700,000 orders/sec
+- Order matching: ~1,000,000 matches/sec (small books), ~20,000 matches/sec (large books)
+- Order cancellation: ~6,600,000 cancels/sec
+- Order modification: ~3,800,000 modifies/sec
+- Average operation latency: 0.15-0.37 μs
 
 ## Features
 
@@ -343,8 +344,8 @@ maintained in a FIFO queue for time priority.
 
 Orders match when:
 
-- Buy price ≥ Best ask price, or
-- Sell price ≤ Best bid price
+- Buy price >= Best ask price, or
+- Sell price <= Best bid price
 
 Matching proceeds in price-time priority:
 
@@ -366,15 +367,18 @@ Processing pipeline tracks sequence numbers, latency, and message statistics.
 
 ## Performance Characteristics
 
-| Operation      | Complexity | Measured Throughput |
-|----------------|------------|---------------------|
-| Add Order      | O(log n)   | ~400K ops/sec       |
-| Cancel Order   | O(1)       | ~2M ops/sec         |
-| Modify Order   | O(log n)   | ~270K ops/sec       |
-| Match Orders   | O(k log n) | ~350K matches/sec   |
-| Get Order Info | O(m)       | ~500K snapshots/sec |
+| Operation      | Complexity | Measured Throughput        |
+|----------------|------------|----------------------------|
+| Add Order      | O(log n)   | ~2,700,000 ops/sec         |
+| Cancel Order   | O(1)       | ~6,600,000 ops/sec         |
+| Modify Order   | O(log n)   | ~3,800,000 ops/sec         |
+| Match Orders   | O(k log n) | ~1,000,000 matches/sec |
+| Get Order Info | O(m)       | ~940,000 snapshots/sec     |
+| HFT Simulation | mixed      | ~1,176,000 ops/sec         |
 
 *n = number of price levels, k = number of matches, m = number of orders*
+*Matching throughput degrades with book depth due to vector scan at each price level.*
+*Recreate by running tests.cpp, benchmarked on a Windows machine*
 
 Benchmarks run on typical development hardware. Actual performance depends on system configuration and workload
 characteristics.
