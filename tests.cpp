@@ -114,6 +114,21 @@ TEST(TestTimePriority_FIFO) {
     ASSERT_EQ(trades[0].GetBidTrade().orderId_, 1);
 }
 
+TEST(TestCancelPreservesFIFO) {
+    Orderbook orderbook;
+    orderbook.AddOrder(std::make_shared<Order>(OrderType::GoodTillCancel, 1, Side::Buy, 100, 10));
+    orderbook.AddOrder(std::make_shared<Order>(OrderType::GoodTillCancel, 2, Side::Buy, 100, 10));
+    orderbook.AddOrder(std::make_shared<Order>(OrderType::GoodTillCancel, 3, Side::Buy, 100, 10));
+
+    orderbook.CancelOrder(1);
+    auto trades = orderbook.AddOrder(
+        std::make_shared<Order>(OrderType::GoodTillCancel, 4, Side::Sell, 100, 10)
+    );
+
+    ASSERT_EQ(trades.size(), 1);
+    ASSERT_EQ(trades[0].GetBidTrade().orderId_, 2);
+}
+
 TEST(TestMarketOrderBuy) {
     Orderbook orderbook;
     orderbook.AddOrder(std::make_shared<Order>(OrderType::GoodTillCancel, 1, Side::Sell, 100, 10));
@@ -589,6 +604,7 @@ int main() {
     RUN_TEST(TestMultipleMatchesAtSamePrice);
     RUN_TEST(TestPricePriority);
     RUN_TEST(TestTimePriority_FIFO);
+    RUN_TEST(TestCancelPreservesFIFO);
     RUN_TEST(TestMarketOrderBuy);
     RUN_TEST(TestMarketOrderSell);
     RUN_TEST(TestMarketOrderEmptyBook);
@@ -603,7 +619,7 @@ int main() {
     RUN_TEST(TestMinNotionalValidation);
     RUN_TEST(TestMarketOrderValidation);
 
-    std::cout << "\nAll " << 21 << " functionality tests passed!\n";
+    std::cout << "\nAll " << 22 << " functionality tests passed!\n";
 
     PrintPerformanceHeader();
 
